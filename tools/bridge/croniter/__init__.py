@@ -39,6 +39,12 @@ SECOND_FIELD = 5
 YEAR_FIELD = 6
 
 UNIX_CRON_LEN = 5
+SECOND_CRON_LEN = 6
+YEAR_CRON_LEN = 7
+
+# The set of field counts croniter accepts (croniter.py:137). Kept because the suite
+# imports it directly to check its own expectations about expression lengths.
+VALID_LEN_EXPRESSION = {UNIX_CRON_LEN, SECOND_CRON_LEN, YEAR_CRON_LEN}
 
 __all__ = [
     "DAY_FIELD",
@@ -131,6 +137,15 @@ def _tz_name(tzinfo: Optional[datetime.tzinfo]) -> Optional[str]:
     zone = getattr(tzinfo, "zone", None)
     if isinstance(zone, str):
         return zone
+    # dateutil.tz.gettz() returns a tzfile, which carries neither `.key` nor `.zone` --
+    # only the path it was loaded from. Falling through to None here would send a real
+    # DST zone as a bare offset and lose every transition in it, which is precisely what
+    # the DST tests are checking.
+    filename = getattr(tzinfo, "_filename", None)
+    if isinstance(filename, str) and filename:
+        name = filename.split("zoneinfo/")[-1] if "zoneinfo/" in filename else filename
+        if name and name != "localtime":
+            return name
     return None
 
 
@@ -303,10 +318,15 @@ class croniter:
         instance's cron expression (list of lists of int | '*' | 'l'), via
         the `expand` wire op. Mirrors croniter-python's `.expanded` attribute."""
         if self._expanded_cache is None:
+            # With expand_from_start_time the expansion is anchored to this instance's
+            # start rather than to zero, so the anchor has to travel with the request --
+            # otherwise `*/15` expands to [0, 15, 30, 45] instead of [8, 23, 38, 53].
             self._expanded_cache, _ = croniter.expand(
                 self.expr_format,
                 hash_id=self._hash_id,
                 second_at_beginning=self.second_at_beginning,
+                from_timestamp=self.start_time if self._expand_from_start_time else None,
+                from_timestamp_tz=self.tzinfo if self._expand_from_start_time else None,
             )
         return self._expanded_cache
 
@@ -315,7 +335,10 @@ class croniter:
     def _args(self) -> dict:
         return {
             "day_or": self._day_or,
-            "hash_id": self._hash_id.decode("UTF-8") if self._hash_id else None,
+            # hash_id is arbitrary bytes -- croniter hashes it, it is never text -- and
+            # the suite passes byte strings that are not valid UTF-8. Decoding it to put
+            # it in JSON raises UnicodeDecodeError; hex survives the round trip exactly.
+            "hash_id_hex": self._hash_id.hex() if self._hash_id else None,
             "implement_cron_bug": self._implement_cron_bug,
             "second_at_beginning": self.second_at_beginning,
             "expand_from_start_time": self._expand_from_start_time,
@@ -454,12 +477,19 @@ class croniter:
         return tuple(i[0] for i in c)
 
     @classmethod
-    def expand(cls, expr_format, hash_id=None, second_at_beginning=False, **_ignored):
+    def expand(
+        cls,
+        expr_format,
+        hash_id=None,
+        second_at_beginning=False,
+        from_timestamp=None,
+        from_timestamp_tz=None,
+        strict=False,
+        strict_year=None,
+        **_ignored,
+    ):
         """Returns `(expanded, nth_weekday_of_month)`, exactly as
-        croniter-python's `expand()` does (see its docstring for shape).
-        `**_ignored` swallows original-only kwargs (from_timestamp,
-        from_timestamp_tz, strict, strict_year) the Rust `expand` op doesn't
-        take yet; none of the original suite's call sites pass them."""
+        croniter-python's `expand()` does (see its docstring for shape)."""
         if hash_id is not None:
             if not isinstance(hash_id, (bytes, str)):
                 raise TypeError("hash_id must be bytes or UTF-8 string")
@@ -467,7 +497,21 @@ class croniter:
                 hash_id = hash_id.encode("UTF-8")
         args = {"second_at_beginning": bool(second_at_beginning)}
         if hash_id is not None:
-            args["hash_id"] = hash_id.decode("UTF-8")
+            args["hash_id_hex"] = hash_id.hex()
+        if from_timestamp is not None:
+            args["from_timestamp"] = float(from_timestamp)
+            tz_name = _tz_name(from_timestamp_tz)
+            if tz_name is not None:
+                args["from_timestamp_tz"] = tz_name
+        if strict:
+            args["strict"] = True
+            args["strict_year"] = (
+                []
+                if strict_year is None
+                else [int(strict_year)]
+                if isinstance(strict_year, int)
+                else [int(y) for y in strict_year]
+            )
         value = _bridge.call(op="expand", expr=expr_format, args=args)
         expanded = [list(field) for field in value["expanded"]]
         nth_weekday_of_month = {int(k): set(v) for k, v in value["nth_weekday_of_month"].items()}
@@ -496,10 +540,17 @@ class croniter:
                 tz=None,
                 ret="datetime",
                 args={
-                    "hash_id": hash_id.decode("UTF-8") if hash_id else None,
+                    "hash_id_hex": hash_id.hex() if hash_id else None,
                     "second_at_beginning": bool(second_at_beginning),
-                    "strict": strict,
-                    "strict_year": strict_year,
+                    "strict": bool(strict),
+                    # Upstream accepts a bare int or a list; the wire carries a list.
+                    "strict_year": (
+                        []
+                        if strict_year is None
+                        else [int(strict_year)]
+                        if isinstance(strict_year, int)
+                        else [int(y) for y in strict_year]
+                    ),
                 },
             )
         except CroniterError:
@@ -621,3 +672,10 @@ def croniter_range(
 # Re-exported for parity with croniter-python's `__init__.py`, which exposes
 # the module itself as `cron_m` (some tests import `croniter.cron_m`).
 cron_m = sys.modules[__name__]
+
+# Upstream the implementation lives in the submodule `croniter.croniter` and the package
+# re-exports from it, so the suite is free to import from either. This shim is flat, so
+# alias the submodule name onto the package rather than splitting the file in two just to
+# reproduce a directory layout. `from croniter.croniter import VALID_LEN_EXPRESSION` then
+# resolves the same way it does upstream.
+sys.modules[f"{__name__}.croniter"] = cron_m

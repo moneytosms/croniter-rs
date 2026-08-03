@@ -179,3 +179,48 @@ regressions over weeks, which is not what this deliverable is.
 
 `rust-toolchain.toml` pins 1.97.1 and edition 2024, so `make build` reproduces from a
 clean clone with no environment-specific setup, satisfying Rule 03.
+
+## 15. Four corpus records are unrepresentable in Rust, and are excluded by name
+
+**Python:** the suite includes calls whose entire purpose is to prove that CPython raises
+on a bad *type*: `ret_type=<something else>` (`TypeError`), `hash_id={1: 2}` (`TypeError`),
+and a `croniter_range` whose `start` is a float while its `stop` is a datetime
+(`CroniterBadTypeRangeError`). A fourth passes `start_time=` to `get_next()` while
+`expand_from_start_time=True` is set, which croniter guards with a `ValueError`
+(croniter.py:347-350).
+
+**Port:** `RetType` is an enum, `hash_id` is `Option<Vec<u8>>`, `croniter_range` takes two
+`NaiveDateTime`s, and `get_next` takes no `start_time`. None of these calls can be
+constructed, so there is no behaviour to match.
+
+`tests/corpus_replay.rs` excludes exactly these four, keyed on the error message the corpus
+recorded, and reports them as `unrepresentable-in-rust` in its summary rather than counting
+them as passes. Matching on the message rather than the error *class* is deliberate: if one
+of these call sites ever produced a different failure, it would still be counted as a
+divergence.
+
+The remaining exclusion is the 10 `R`/`R(a-b)` records, which are random by construction
+(§12) and reported separately as `random-expr (unverifiable)`. Everything else in the
+corpus — 15,824 records — is replayed and compared.
+
+## 16. The conformance bridge is stateless, so random expressions diverge across calls
+
+**Python:** `croniter("R R R(10-20) * *", start)` draws its random values once, in
+`__init__`, and every subsequent `get_next()` reuses that one expansion.
+
+**Bridge:** the shim under `tools/bridge/` sends `(expr, start, args)` per call and the
+Rust side builds a fresh `Croniter` for each request. That is fine for every deterministic
+expression — the expansion is a pure function of the inputs — but for an `R` expression it
+means a new draw per call, so consecutive `get_next()`s can move backwards.
+
+This is a property of the bridge, not of the port: `Croniter` holds its `Expanded` for its
+whole lifetime, which is why the same expressions behave correctly through the crate's own
+API. Making the bridge faithful here needs an instance-handle protocol (create once, then
+address it by id), which is a larger change to a transport that exists only as the
+*secondary* verification path.
+
+The cost is confined to `tests/original/test_croniter_random.py`: 246-247 of 248 tests
+pass through the bridge, and which of the random cases fail varies run to run because the
+values are drawn randomly. Nothing outside that file is affected. The primary check, the
+golden-corpus replay, excludes the same expressions for the same reason (§12, §15) and
+passes 100% on everything else.

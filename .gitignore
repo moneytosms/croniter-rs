@@ -2,3 +2,5 @@ target/
 .venv/
 __pycache__/
 *.pyc
+# pinned upstream checkout fetched by tools/extract_corpus/run.sh
+tools/extract_corpus/.source/

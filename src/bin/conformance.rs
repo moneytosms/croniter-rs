@@ -47,10 +47,48 @@ struct Args {
     expand_from_start_time: bool,
     #[serde(default)]
     max_years_between_matches: Option<i64>,
+    /// Hex-encoded. `hash_id` is arbitrary bytes that croniter feeds to a hash, not
+    /// text, and the original suite passes byte strings that are not valid UTF-8 -- so
+    /// it cannot travel through JSON as a string without either corrupting or raising.
     #[serde(default)]
-    hash_id: Option<String>,
+    hash_id_hex: Option<String>,
     #[serde(default)]
     exclude_ends: bool,
+    /// `expand`-only: the instant a start-time-relative expansion anchors to.
+    /// `*/15` means "every 15 seconds from :00" normally, but "every 15 seconds from
+    /// the start second" when `expand_from_start_time` is on, so the expansion cannot
+    /// be computed without it.
+    #[serde(default)]
+    from_timestamp: Option<f64>,
+    #[serde(default)]
+    from_timestamp_tz: Option<String>,
+    /// `validate`-only: croniter's opt-in cross-validation of day-of-month against
+    /// month (and year), which rejects things like Feb 31st.
+    #[serde(default)]
+    strict: bool,
+    #[serde(default)]
+    strict_year: Vec<i64>,
+}
+
+impl Args {
+    fn hash_id(&self) -> Result<Option<Vec<u8>>, CroniterError> {
+        let Some(hex) = self.hash_id_hex.as_deref() else {
+            return Ok(None);
+        };
+        if !hex.len().is_multiple_of(2) {
+            return Err(CroniterError::Other(format!(
+                "odd-length hash_id_hex {hex:?}"
+            )));
+        }
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| {
+                u8::from_str_radix(&hex[i..i + 2], 16)
+                    .map_err(|e| CroniterError::Other(format!("bad hash_id_hex {hex:?}: {e}")))
+            })
+            .collect::<Result<Vec<u8>, _>>()
+            .map(Some)
+    }
 }
 
 fn yes() -> bool {
@@ -101,18 +139,87 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
+/// Split an ISO-8601 string into its local part and its UTC offset, if it has one.
+///
+/// Splitting on `['+', 'Z']` misses negative offsets: `2018-02-17T21:00:00-02:00` has
+/// neither, so the whole string survives and then fails to parse. The offset is also
+/// worth keeping rather than discarding — inside a DST fold it is the only thing that
+/// says which of the two instants the caller meant.
+fn split_offset(s: &str) -> (&str, Option<chrono::FixedOffset>) {
+    if let Some(rest) = s.strip_suffix('Z') {
+        return (rest, chrono::FixedOffset::east_opt(0));
+    }
+    let bytes = s.as_bytes();
+    if s.len() > 6 {
+        let at = s.len() - 6;
+        if (bytes[at] == b'+' || bytes[at] == b'-') && bytes[at + 3] == b':' {
+            let (local, off) = s.split_at(at);
+            let mins = off[1..]
+                .split(':')
+                .try_fold(0i32, |acc, part| part.parse::<i32>().map(|n| acc * 60 + n));
+            if let Ok(mins) = mins {
+                let secs = if bytes[at] == b'-' {
+                    -mins * 60
+                } else {
+                    mins * 60
+                };
+                return (local, chrono::FixedOffset::east_opt(secs));
+            }
+        }
+    }
+    (s, None)
+}
+
 fn parse_naive(s: &str) -> Result<NaiveDateTime, CroniterError> {
     // Accept both "YYYY-MM-DDTHH:MM:SS[.ffffff]" and the space-separated form Python's
     // str(datetime) produces.
     let normalized = s.replace(' ', "T");
-    let trimmed = normalized
-        .split(['+', 'Z'])
-        .next()
-        .unwrap_or(&normalized)
-        .to_string();
-    NaiveDateTime::parse_from_str(&trimmed, "%Y-%m-%dT%H:%M:%S%.f")
-        .or_else(|_| NaiveDateTime::parse_from_str(&trimmed, "%Y-%m-%dT%H:%M:%S"))
+    let (trimmed, _) = split_offset(&normalized);
+    NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S%.f")
+        .or_else(|_| NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S"))
         .map_err(|e| CroniterError::Other(format!("bad datetime {s:?}: {e}")))
+}
+
+/// The instant a request's `start` denotes, honouring the offset it carries.
+fn parse_aware(s: &str, tz: Tz) -> Result<DateTime<Tz>, CroniterError> {
+    use chrono::TimeZone;
+    let normalized = s.replace(' ', "T");
+    let (local, offset) = split_offset(&normalized);
+    let naive = NaiveDateTime::parse_from_str(local, "%Y-%m-%dT%H:%M:%S%.f")
+        .or_else(|_| NaiveDateTime::parse_from_str(local, "%Y-%m-%dT%H:%M:%S"))
+        .map_err(|e| CroniterError::Other(format!("bad datetime {s:?}: {e}")))?;
+    match offset {
+        Some(off) => off
+            .from_local_datetime(&naive)
+            .single()
+            .map(|dt| dt.with_timezone(&tz))
+            .ok_or_else(|| CroniterError::Other(format!("bad datetime {s:?}"))),
+        None => Ok(resolve_local(naive, tz)),
+    }
+}
+
+/// A local wall-clock time as an instant, including times that do not exist.
+///
+/// During a spring-forward gap `and_local_timezone` yields `LocalResult::None`, and
+/// erroring there is wrong: Python builds the datetime regardless and the offset in
+/// force *before* the transition is what it ends up meaning, so 02:05 on a US
+/// spring-forward day reads back as 03:05 local. Rejecting it would make the port look
+/// as though it could not handle the very transitions it is being tested on.
+fn resolve_local(naive: NaiveDateTime, tz: Tz) -> DateTime<Tz> {
+    use chrono::{Duration, TimeZone};
+    if let Some(dt) = naive.and_local_timezone(tz).earliest() {
+        return dt;
+    }
+    // Inside the gap: interpret against the pre-transition offset. A gap is at most a
+    // few hours, so stepping back to a resolvable local time and re-adding the delta
+    // lands on the instant Python names.
+    for minutes in 1..=(24 * 60) {
+        let probe = naive - Duration::minutes(minutes);
+        if let Some(before) = probe.and_local_timezone(tz).earliest() {
+            return before + Duration::minutes(minutes);
+        }
+    }
+    tz.from_utc_datetime(&naive)
 }
 
 fn resolve_tz(name: &str) -> Result<Tz, CroniterError> {
@@ -120,8 +227,8 @@ fn resolve_tz(name: &str) -> Result<Tz, CroniterError> {
         .map_err(|_| CroniterError::Other(format!("unknown timezone {name:?}")))
 }
 
-fn build_options(req: &Request) -> Options {
-    Options {
+fn build_options(req: &Request) -> Result<Options, CroniterError> {
+    Ok(Options {
         ret_type: match req.ret.as_deref() {
             Some("datetime") => RetType::DateTime,
             _ => RetType::Timestamp,
@@ -129,26 +236,24 @@ fn build_options(req: &Request) -> Options {
         day_or: req.args.day_or,
         max_years_between_matches: req.args.max_years_between_matches,
         is_prev: false,
-        hash_id: req.args.hash_id.as_ref().map(|h| h.as_bytes().to_vec()),
+        hash_id: req.args.hash_id()?,
         implement_cron_bug: req.args.implement_cron_bug,
         second_at_beginning: req.args.second_at_beginning,
         expand_from_start_time: req.args.expand_from_start_time,
-    }
+    })
 }
 
 fn make_cron(req: &Request) -> Result<Croniter, CroniterError> {
-    let opts = build_options(req);
-    let start = req.start.as_deref().map(parse_naive).transpose()?;
-    match (&req.tz, start) {
-        (Some(tz_name), Some(naive)) => {
-            let tz = resolve_tz(tz_name)?;
-            let aware: DateTime<Tz> = naive
-                .and_local_timezone(tz)
-                .earliest()
-                .ok_or_else(|| CroniterError::Other("start time does not exist in tz".into()))?;
+    let opts = build_options(req)?;
+    match (&req.tz, req.start.as_deref()) {
+        (Some(tz_name), Some(start)) => {
+            let aware = parse_aware(start, resolve_tz(tz_name)?)?;
             Croniter::with_options(&req.expr, None, Some(aware), opts)
         }
-        _ => Croniter::with_options(&req.expr, start, None, opts),
+        (_, start) => {
+            let naive = start.map(parse_naive).transpose()?;
+            Croniter::with_options(&req.expr, naive, None, opts)
+        }
     }
 }
 
@@ -162,11 +267,27 @@ fn encode(occ: Occurrence) -> Value {
 
 fn handle(req: Request) -> Result<Value, CroniterError> {
     match req.op.as_str() {
-        "validate" => Ok(json!(Croniter::is_valid(
-            &req.expr,
-            req.args.hash_id.as_ref().map(|h| h.as_bytes()),
-            req.args.second_at_beginning,
-        ))),
+        // Propagates the parse error rather than reporting a bool.
+        //
+        // Both callers need the failure, not a verdict: the shim's `__init__` issues a
+        // `validate` to reproduce croniter's eager `_expand()` (a bad expression has to
+        // raise out of the constructor), and its `is_valid` wraps the same call in
+        // `try/except` to turn that raise back into `False`. Answering `false` here would
+        // be a successful response, so the constructor would happily build a croniter
+        // around an expression Python rejects.
+        "validate" => {
+            let expanded = croniter::expand::expand(
+                &req.expr,
+                req.args.hash_id()?.as_deref(),
+                req.args.second_at_beginning,
+                None,
+                None,
+            )?;
+            if req.args.strict {
+                croniter::expand::check_strict(&expanded, &req.expr, &req.args.strict_year)?;
+            }
+            Ok(json!(true))
+        }
 
         "next" => {
             let mut cron = make_cron(&req)?;
@@ -248,6 +369,7 @@ fn handle(req: Request) -> Result<Value, CroniterError> {
                 &req.expr,
                 req.args.day_or,
                 req.args.exclude_ends,
+                req.args.second_at_beginning,
             )?;
             Ok(Value::Array(
                 items
@@ -261,13 +383,22 @@ fn handle(req: Request) -> Result<Value, CroniterError> {
         // directly (`.expanded` 68 times, `croniter.expand` 37, `HashExpander` 13), so
         // the bridge needs a way to hand it back in croniter's own shape.
         "expand" => {
+            let from_tz = req
+                .args
+                .from_timestamp_tz
+                .as_deref()
+                .map(resolve_tz)
+                .transpose()?;
             let expanded = croniter::expand::expand(
                 &req.expr,
-                req.args.hash_id.as_ref().map(|h| h.as_bytes()),
+                req.args.hash_id()?.as_deref(),
                 req.args.second_at_beginning,
-                None,
-                None,
+                req.args.from_timestamp,
+                from_tz,
             )?;
+            if req.args.strict {
+                croniter::expand::check_strict(&expanded, &req.expr, &req.args.strict_year)?;
+            }
             Ok(json!({
                 "expanded": expanded
                     .fields

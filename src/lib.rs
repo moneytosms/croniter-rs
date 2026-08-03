@@ -8,6 +8,13 @@
 //! - [`calc`] searches for the next/previous match in naive local time (croniter `_calc`)
 //! - [`tz`] re-attaches the timezone and resolves DST (croniter.py:780-819)
 
+// The parser and the search are deliberately shaped like the Python they came from, so
+// that the two can be read side by side and a divergence shows up as a structural
+// difference. Collapsing croniter's nested guards into `&&` chains would break that
+// correspondence for no behavioural gain, so this lint is off crate-wide rather than
+// silenced one site at a time.
+#![allow(clippy::collapsible_if)]
+
 pub mod calc;
 pub mod error;
 pub mod expand;
@@ -19,8 +26,8 @@ use chrono_tz::Tz;
 
 pub use error::{CroniterError, Result};
 pub use expr::{
-    DAY_FIELD, Expanded, Expr, HOUR_FIELD, MINUTE_FIELD, MONTH_FIELD, SECOND_FIELD,
-    UNIX_CRON_LEN, YEAR_FIELD,
+    DAY_FIELD, Expanded, Expr, HOUR_FIELD, MINUTE_FIELD, MONTH_FIELD, SECOND_FIELD, UNIX_CRON_LEN,
+    YEAR_FIELD,
 };
 
 use calc::CalcOptions;
@@ -167,7 +174,11 @@ impl Croniter {
             } else {
                 None
             },
-            if opts.expand_from_start_time { tz } else { None },
+            if opts.expand_from_start_time {
+                tz
+            } else {
+                None
+            },
         )?;
 
         Ok(Self {
@@ -206,10 +217,42 @@ impl Croniter {
         self.is_prev
     }
 
+    /// Narrow the search window without marking it as caller-supplied.
+    ///
+    /// croniter keeps the bound and the "was it given explicitly" flag in two separate
+    /// attributes (`_max_years_between_matches` / `_max_years_btw_matches_explicitly_set`,
+    /// croniter.py:314-317), and the difference is load-bearing: `all_next` *stops* at the
+    /// bound when it was explicit and *raises* `CroniterBadDateError` when it was not
+    /// (croniter.py:446-450). Passing `max_years_between_matches` to the constructor sets
+    /// both; this sets only the bound, which is what assigning the bare attribute does.
+    pub fn set_max_years_between_matches(&mut self, years: i64) {
+        self.max_years_between_matches = years.max(1);
+    }
+
+    /// Split an epoch-seconds float the way `datetime.fromtimestamp` does.
+    ///
+    /// Python's `datetime` holds whole microseconds and nothing finer, so `fromtimestamp`
+    /// rounds to the nearest microsecond. Keeping chrono's full nanosecond resolution here
+    /// is not "more precise", it is a different value: a start of `...T00:00:00.000001`
+    /// lands on a float that is ~954ns past the second, and the `-1 microsecond` offset at
+    /// the top of the prev search (`calc`, mirroring croniter.py:549) then leaves the
+    /// cursor 46ns *below* the second instead of exactly on it. `replace(second=0)` drops
+    /// it into the previous minute, and `get_prev` answers a whole day early. Round to
+    /// microseconds and the two implementations agree.
+    fn split_epoch_micros(ts: f64) -> (i64, u32) {
+        let secs = ts.div_euclid(1.0) as i64;
+        let micros = (ts.rem_euclid(1.0) * 1e6).round() as u32;
+        // Rounding up can carry into the next second.
+        if micros >= 1_000_000 {
+            (secs + 1, 0)
+        } else {
+            (secs, micros * 1_000)
+        }
+    }
+
     /// croniter's `timestamp_to_datetime` (croniter.py:388-402).
     fn timestamp_to_naive(&self, ts: f64) -> NaiveDateTime {
-        let secs = ts.div_euclid(1.0) as i64;
-        let nanos = (ts.rem_euclid(1.0) * 1e9).round() as u32;
+        let (secs, nanos) = Self::split_epoch_micros(ts);
         let utc = DateTime::from_timestamp(secs, nanos)
             .unwrap_or_else(|| DateTime::from_timestamp(0, 0).expect("epoch is representable"));
         match self.tz {
@@ -220,8 +263,7 @@ impl Croniter {
 
     fn aware_current(&self) -> Option<DateTime<Tz>> {
         let tz = self.tz?;
-        let secs = self.cur.div_euclid(1.0) as i64;
-        let nanos = (self.cur.rem_euclid(1.0) * 1e9).round() as u32;
+        let (secs, nanos) = Self::split_epoch_micros(self.cur);
         Some(DateTime::from_timestamp(secs, nanos)?.with_timezone(&tz))
     }
 
@@ -358,12 +400,28 @@ impl Croniter {
     /// `CroniterBadDateError` when `max_years_between_matches` was set explicitly,
     /// and propagates it otherwise.
     pub fn all_next(&mut self, ret_type: Option<RetType>, n: usize) -> Result<Vec<Occurrence>> {
-        self.collect_many(ret_type, n, false)
+        self.collect_many(ret_type, n, false, true)
     }
 
     /// croniter's `all_prev` (croniter.py:452 onward).
     pub fn all_prev(&mut self, ret_type: Option<RetType>, n: usize) -> Result<Vec<Occurrence>> {
-        self.collect_many(ret_type, n, true)
+        self.collect_many(ret_type, n, true, true)
+    }
+
+    /// `all_next` / `all_prev` with croniter's `update_current` argument.
+    ///
+    /// With `update_current = false` the cursor never advances, so the generator hands
+    /// back the same instant every time rather than walking. That is croniter's documented
+    /// behaviour, not a degenerate case: it is how a caller peeks at the next fire time
+    /// repeatedly without consuming it.
+    pub fn all_from(
+        &mut self,
+        ret_type: Option<RetType>,
+        n: usize,
+        is_prev: bool,
+        update_current: bool,
+    ) -> Result<Vec<Occurrence>> {
+        self.collect_many(ret_type, n, is_prev, update_current)
     }
 
     fn collect_many(
@@ -371,10 +429,11 @@ impl Croniter {
         ret_type: Option<RetType>,
         n: usize,
         is_prev: bool,
+        update_current: bool,
     ) -> Result<Vec<Occurrence>> {
         let mut out = Vec::with_capacity(n);
         for _ in 0..n {
-            match self.step(ret_type, is_prev, true) {
+            match self.step(ret_type, is_prev, update_current) {
                 Ok(v) => out.push(v),
                 Err(e @ CroniterError::BadDate(_)) => {
                     if self.max_years_explicitly_set {
@@ -442,7 +501,73 @@ pub fn croniter_range(
     expr: &str,
     day_or: bool,
     exclude_ends: bool,
+    second_at_beginning: bool,
 ) -> Result<Vec<NaiveDateTime>> {
+    let items = croniter_range_inner(
+        start,
+        stop,
+        None,
+        expr,
+        day_or,
+        exclude_ends,
+        second_at_beginning,
+    )?;
+    Ok(items
+        .into_iter()
+        .map(|occ| match occ {
+            Occurrence::Naive(d) => d,
+            Occurrence::DateTime(d) => d.naive_local(),
+            Occurrence::Timestamp(t) => DateTime::from_timestamp(t as i64, 0)
+                .unwrap_or_default()
+                .naive_utc(),
+        })
+        .collect())
+}
+
+/// `croniter_range` over timezone-aware bounds.
+///
+/// Python does not have a separate entry point for this: `croniter_range` just passes
+/// whatever `start` it was handed into the constructor, so an aware `start` yields aware
+/// results that fold and unfold across DST. Rust needs the two shapes spelled out because
+/// the naive and aware datetimes are different types.
+pub fn croniter_range_tz(
+    start: DateTime<Tz>,
+    stop: DateTime<Tz>,
+    expr: &str,
+    day_or: bool,
+    exclude_ends: bool,
+    second_at_beginning: bool,
+) -> Result<Vec<DateTime<Tz>>> {
+    let tz = start.timezone();
+    let items = croniter_range_inner(
+        start.naive_local(),
+        stop.naive_local(),
+        Some(tz),
+        expr,
+        day_or,
+        exclude_ends,
+        second_at_beginning,
+    )?;
+    Ok(items
+        .into_iter()
+        .map(|occ| match occ {
+            Occurrence::DateTime(d) => d,
+            other => DateTime::from_timestamp_micros((other.as_timestamp() * 1e6).round() as i64)
+                .unwrap_or_default()
+                .with_timezone(&tz),
+        })
+        .collect())
+}
+
+fn croniter_range_inner(
+    start: NaiveDateTime,
+    stop: NaiveDateTime,
+    tz: Option<Tz>,
+    expr: &str,
+    day_or: bool,
+    exclude_ends: bool,
+    second_at_beginning: bool,
+) -> Result<Vec<Occurrence>> {
     let (mut start, mut stop) = (start, stop);
     if !exclude_ends {
         let ms1 = Duration::microseconds(1);
@@ -462,9 +587,29 @@ pub fn croniter_range(
         ret_type: RetType::DateTime,
         day_or,
         max_years_between_matches: Some(year_span),
+        second_at_beginning,
         ..Default::default()
     };
-    let mut cron = Croniter::with_options(expr, Some(start), None, opts)?;
+
+    let localize = |d: NaiveDateTime, what: &str| -> Result<DateTime<Tz>> {
+        let tz = tz.expect("only called when a timezone is present");
+        d.and_local_timezone(tz)
+            .earliest()
+            .ok_or_else(|| CroniterError::Other(format!("range {what} not representable in tz")))
+    };
+
+    let mut cron = match tz {
+        Some(_) => Croniter::with_options(expr, None, Some(localize(start, "start")?), opts)?,
+        None => Croniter::with_options(expr, Some(start), None, opts)?,
+    };
+
+    // Compare on instants rather than on local wall time. For the naive case the two are
+    // the same ordering; across a DST boundary they are not, and Python is comparing
+    // aware datetimes, i.e. instants.
+    let stop_ts = match tz {
+        Some(_) => datetime_to_timestamp(localize(stop, "stop")?),
+        None => naive_to_timestamp(stop),
+    };
 
     let mut out = Vec::new();
     loop {
@@ -473,18 +618,17 @@ pub fn croniter_range(
         } else {
             cron.get_prev(Some(RetType::DateTime))
         };
-        let dt = match next {
-            Ok(Occurrence::Naive(d)) => d,
-            Ok(Occurrence::DateTime(d)) => d.naive_local(),
-            Ok(Occurrence::Timestamp(t)) => cron.timestamp_to_naive(t),
+        let occ = match next {
+            Ok(o) => o,
             Err(CroniterError::BadDate(_)) => break,
             Err(e) => return Err(e),
         };
-        let keep_going = if forward { dt < stop } else { dt > stop };
+        let ts = occ.as_timestamp();
+        let keep_going = if forward { ts < stop_ts } else { ts > stop_ts };
         if !keep_going {
             break;
         }
-        out.push(dt);
+        out.push(occ);
     }
     Ok(out)
 }

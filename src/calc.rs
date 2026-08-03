@@ -7,8 +7,8 @@
 
 use crate::error::{CroniterError, Result};
 use crate::expr::{
-    last_day_of_month, Expanded, Expr, DAY_FIELD, DOW_FIELD, HOUR_FIELD, MINUTE_FIELD,
-    MONTH_FIELD, NTH_LAST, SECOND_FIELD, YEAR_FIELD,
+    DAY_FIELD, DOW_FIELD, Expanded, Expr, HOUR_FIELD, MINUTE_FIELD, MONTH_FIELD, NTH_LAST,
+    SECOND_FIELD, YEAR_FIELD, last_day_of_month,
 };
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Timelike};
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,7 +55,10 @@ pub fn calc_next(
     // up front, and thread them through both the t1 and t2 sub-calculations exactly like
     // croniter's separately-stored `self.nearest_weekday` set persists across the blanking.
     let w_days: Vec<i64> = if exp.nearest_weekday {
-        exp.fields[DAY_FIELD].iter().filter_map(|e| e.as_num()).collect()
+        exp.fields[DAY_FIELD]
+            .iter()
+            .filter_map(|e| e.as_num())
+            .collect()
     } else {
         Vec::new()
     };
@@ -372,7 +375,12 @@ fn calc(
 
         // proc_year (croniter.py:566-585)
         if has_year && !is_all(&fields[YEAR_FIELD]) {
-            let diff_year = nearest_diff(unaware_time.year() as i64, &fields[YEAR_FIELD], None, is_prev);
+            let diff_year = nearest_diff(
+                unaware_time.year() as i64,
+                &fields[YEAR_FIELD],
+                None,
+                is_prev,
+            );
             match diff_year {
                 None => return Err(CroniterError::BadDate(bad_date_msg(is_prev))),
                 Some(0) => {}
@@ -440,7 +448,11 @@ fn calc(
                 continue;
             }
             candidates.sort_unstable();
-            let target = if is_prev { *candidates.last().unwrap() } else { candidates[0] };
+            let target = if is_prev {
+                *candidates.last().unwrap()
+            } else {
+                candidates[0]
+            };
             let diff_day = target - d_day;
             if diff_day != 0 {
                 unaware_time = if is_prev {
@@ -461,8 +473,13 @@ fn calc(
             if !(has_last && days == d_day) {
                 let diff_day = if is_prev {
                     let prev_month = (cur_month - 2).rem_euclid(MONTHS_IN_YEAR) + 1;
-                    let prev_year = if cur_month == 1 { cur_year - 1 } else { cur_year };
-                    let days_in_prev_month = last_day_of_month(prev_year as i32, prev_month as u32) as i64;
+                    let prev_year = if cur_month == 1 {
+                        cur_year - 1
+                    } else {
+                        cur_year
+                    };
+                    let days_in_prev_month =
+                        last_day_of_month(prev_year as i32, prev_month as u32) as i64;
                     nearest_diff(d_day, &fields[DAY_FIELD], Some(days_in_prev_month), is_prev)
                 } else {
                     nearest_diff(d_day, &fields[DAY_FIELD], Some(days), is_prev)
@@ -516,7 +533,11 @@ fn calc(
                 continue;
             }
             candidates.sort_unstable();
-            let target = if is_prev { *candidates.last().unwrap() } else { candidates[0] };
+            let target = if is_prev {
+                *candidates.last().unwrap()
+            } else {
+                candidates[0]
+            };
             let diff_day = target - d_day;
             if diff_day != 0 {
                 unaware_time = if is_prev {
@@ -545,13 +566,24 @@ fn calc(
 
         // proc_hour (croniter.py:712-723)
         if !is_all(&fields[HOUR_FIELD]) {
-            let diff_hour = nearest_diff(unaware_time.hour() as i64, &fields[HOUR_FIELD], Some(24), is_prev);
+            let diff_hour = nearest_diff(
+                unaware_time.hour() as i64,
+                &fields[HOUR_FIELD],
+                Some(24),
+                is_prev,
+            );
             if let Some(dh) = diff_hour {
                 if dh != 0 {
                     unaware_time = if is_prev {
-                        add_duration(set_time(unaware_time, unaware_time.hour(), 59, 59), Duration::hours(dh))?
+                        add_duration(
+                            set_time(unaware_time, unaware_time.hour(), 59, 59),
+                            Duration::hours(dh),
+                        )?
                     } else {
-                        add_duration(set_time(unaware_time, unaware_time.hour(), 0, 0), Duration::hours(dh))?
+                        add_duration(
+                            set_time(unaware_time, unaware_time.hour(), 0, 0),
+                            Duration::hours(dh),
+                        )?
                     };
                     year = unaware_time.year() as i64;
                     continue;
@@ -561,7 +593,12 @@ fn calc(
 
         // proc_minute (croniter.py:725-736)
         if !is_all(&fields[MINUTE_FIELD]) {
-            let diff_min = nearest_diff(unaware_time.minute() as i64, &fields[MINUTE_FIELD], Some(60), is_prev);
+            let diff_min = nearest_diff(
+                unaware_time.minute() as i64,
+                &fields[MINUTE_FIELD],
+                Some(60),
+                is_prev,
+            );
             if let Some(dmin) = diff_min {
                 if dmin != 0 {
                     unaware_time = if is_prev {
@@ -584,7 +621,12 @@ fn calc(
         // proc_second (croniter.py:738-749)
         if has_seconds {
             if !is_all(&fields[SECOND_FIELD]) {
-                let diff_sec = nearest_diff(unaware_time.second() as i64, &fields[SECOND_FIELD], Some(60), is_prev);
+                let diff_sec = nearest_diff(
+                    unaware_time.second() as i64,
+                    &fields[SECOND_FIELD],
+                    Some(60),
+                    is_prev,
+                );
                 if let Some(ds) = diff_sec {
                     if ds != 0 {
                         unaware_time = add_duration(unaware_time, Duration::seconds(ds))?;
@@ -612,7 +654,10 @@ mod tests {
     use crate::expr::Expr::{Last, Num, Star};
 
     fn dt(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> NaiveDateTime {
-        NaiveDate::from_ymd_opt(y, mo, d).unwrap().and_hms_opt(h, mi, s).unwrap()
+        NaiveDate::from_ymd_opt(y, mo, d)
+            .unwrap()
+            .and_hms_opt(h, mi, s)
+            .unwrap()
     }
 
     fn opts() -> CalcOptions {
@@ -623,13 +668,39 @@ mod tests {
         }
     }
 
-    fn unix_exp(minute: Vec<Expr>, hour: Vec<Expr>, day: Vec<Expr>, month: Vec<Expr>, dow: Vec<Expr>) -> Expanded {
+    fn unix_exp(
+        minute: Vec<Expr>,
+        hour: Vec<Expr>,
+        day: Vec<Expr>,
+        month: Vec<Expr>,
+        dow: Vec<Expr>,
+    ) -> Expanded {
         let exprs = vec![
-            if minute == vec![Star] { "*".into() } else { "x".into() },
-            if hour == vec![Star] { "*".into() } else { "x".into() },
-            if day == vec![Star] { "*".into() } else { "x".into() },
-            if month == vec![Star] { "*".into() } else { "x".into() },
-            if dow == vec![Star] { "*".into() } else { "x".into() },
+            if minute == vec![Star] {
+                "*".into()
+            } else {
+                "x".into()
+            },
+            if hour == vec![Star] {
+                "*".into()
+            } else {
+                "x".into()
+            },
+            if day == vec![Star] {
+                "*".into()
+            } else {
+                "x".into()
+            },
+            if month == vec![Star] {
+                "*".into()
+            } else {
+                "x".into()
+            },
+            if dow == vec![Star] {
+                "*".into()
+            } else {
+                "x".into()
+            },
         ];
         Expanded {
             fields: vec![minute, hour, day, month, dow],
@@ -659,7 +730,13 @@ mod tests {
     // "30 9 * * *" specific hour+minute
     #[test]
     fn specific_hour_minute_next() {
-        let exp = unix_exp(vec![Num(30)], vec![Num(9)], vec![Star], vec![Star], vec![Star]);
+        let exp = unix_exp(
+            vec![Num(30)],
+            vec![Num(9)],
+            vec![Star],
+            vec![Star],
+            vec![Star],
+        );
         let cur = dt(2024, 1, 1, 8, 0, 0);
         let next = calc_next(cur, &exp, &opts(), false).unwrap();
         assert_eq!(next, dt(2024, 1, 1, 9, 30, 0));
@@ -667,7 +744,13 @@ mod tests {
 
     #[test]
     fn specific_hour_minute_rolls_to_next_day() {
-        let exp = unix_exp(vec![Num(30)], vec![Num(9)], vec![Star], vec![Star], vec![Star]);
+        let exp = unix_exp(
+            vec![Num(30)],
+            vec![Num(9)],
+            vec![Star],
+            vec![Star],
+            vec![Star],
+        );
         let cur = dt(2024, 1, 1, 10, 0, 0);
         let next = calc_next(cur, &exp, &opts(), false).unwrap();
         assert_eq!(next, dt(2024, 1, 2, 9, 30, 0));
@@ -676,7 +759,13 @@ mod tests {
     // month rollover: "0 0 1 * *" first of month at midnight
     #[test]
     fn month_rollover_next() {
-        let exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Num(1)], vec![Star], vec![Star]);
+        let exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Num(1)],
+            vec![Star],
+            vec![Star],
+        );
         let cur = dt(2024, 1, 15, 0, 0, 0);
         let next = calc_next(cur, &exp, &opts(), false).unwrap();
         assert_eq!(next, dt(2024, 2, 1, 0, 0, 0));
@@ -684,7 +773,13 @@ mod tests {
 
     #[test]
     fn month_rollover_prev() {
-        let exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Num(1)], vec![Star], vec![Star]);
+        let exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Num(1)],
+            vec![Star],
+            vec![Star],
+        );
         let cur = dt(2024, 2, 15, 0, 0, 0);
         let prev = calc_next(cur, &exp, &opts(), true).unwrap();
         assert_eq!(prev, dt(2024, 2, 1, 0, 0, 0));
@@ -693,7 +788,13 @@ mod tests {
     // year rollover: "0 0 1 1 *" (only Jan matches), starting in December
     #[test]
     fn year_rollover_next() {
-        let exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Num(1)], vec![Num(1)], vec![Star]);
+        let exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Num(1)],
+            vec![Num(1)],
+            vec![Star],
+        );
         let cur = dt(2024, 12, 15, 0, 0, 0);
         let next = calc_next(cur, &exp, &opts(), false).unwrap();
         assert_eq!(next, dt(2025, 1, 1, 0, 0, 0));
@@ -701,7 +802,13 @@ mod tests {
 
     #[test]
     fn year_rollover_prev() {
-        let exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Num(1)], vec![Num(1)], vec![Star]);
+        let exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Num(1)],
+            vec![Num(1)],
+            vec![Star],
+        );
         let cur = dt(2025, 1, 15, 0, 0, 0);
         let prev = calc_next(cur, &exp, &opts(), true).unwrap();
         assert_eq!(prev, dt(2025, 1, 1, 0, 0, 0));
@@ -710,7 +817,13 @@ mod tests {
     // day-of-month vs day-of-week union: "0 0 1 * 1" (1st of month OR every Monday)
     #[test]
     fn dom_dow_union_next() {
-        let exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Num(1)], vec![Star], vec![Num(1)]);
+        let exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Num(1)],
+            vec![Star],
+            vec![Num(1)],
+        );
         // 2024-01-01 is a Monday, so starting on 1/1 0:00:00, next should be Monday 1/8.
         let cur = dt(2024, 1, 1, 0, 0, 0);
         let next = calc_next(cur, &exp, &opts(), false).unwrap();
@@ -720,7 +833,13 @@ mod tests {
     #[test]
     fn dom_dow_union_prefers_earlier_of_the_two() {
         // "0 0 15 * 3" - 15th of month OR every Wednesday.
-        let exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Num(15)], vec![Star], vec![Num(3)]);
+        let exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Num(15)],
+            vec![Star],
+            vec![Num(3)],
+        );
         // 2024-01-01 is Monday. Next Wednesday is 2024-01-03, well before the 15th.
         let cur = dt(2024, 1, 1, 0, 0, 0);
         let next = calc_next(cur, &exp, &opts(), false).unwrap();
@@ -736,7 +855,13 @@ mod tests {
         let mut o = opts();
         o.day_or = false;
         // "0 0 1 * 1": with intersection semantics, must be the 1st AND a Monday.
-        let exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Num(1)], vec![Star], vec![Num(1)]);
+        let exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Num(1)],
+            vec![Star],
+            vec![Num(1)],
+        );
         let cur = dt(2024, 1, 1, 0, 0, 0);
         let next = calc_next(cur, &exp, &o, false).unwrap();
         // Next month where the 1st falls on Monday: 2024-04-01 is a Monday.
@@ -746,7 +871,13 @@ mod tests {
     // "L" last day of month
     #[test]
     fn last_day_of_month_next() {
-        let exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Last], vec![Star], vec![Star]);
+        let exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Last],
+            vec![Star],
+            vec![Star],
+        );
         let cur = dt(2024, 2, 1, 0, 0, 0);
         let next = calc_next(cur, &exp, &opts(), false).unwrap();
         assert_eq!(next, dt(2024, 2, 29, 0, 0, 0)); // 2024 is a leap year
@@ -754,7 +885,13 @@ mod tests {
 
     #[test]
     fn last_day_of_month_prev() {
-        let exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Last], vec![Star], vec![Star]);
+        let exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Last],
+            vec![Star],
+            vec![Star],
+        );
         let cur = dt(2024, 2, 15, 0, 0, 0);
         let prev = calc_next(cur, &exp, &opts(), true).unwrap();
         assert_eq!(prev, dt(2024, 1, 31, 0, 0, 0));
@@ -763,7 +900,13 @@ mod tests {
     // leap year Feb 29 explicit
     #[test]
     fn leap_year_feb_29_next() {
-        let exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Num(29)], vec![Num(2)], vec![Star]);
+        let exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Num(29)],
+            vec![Num(2)],
+            vec![Star],
+        );
         let cur = dt(2023, 1, 1, 0, 0, 0);
         let next = calc_next(cur, &exp, &opts(), false).unwrap();
         assert_eq!(next, dt(2024, 2, 29, 0, 0, 0));
@@ -774,7 +917,13 @@ mod tests {
     fn nth_weekday_of_month_next() {
         let mut nth = BTreeMap::new();
         nth.insert(2i64, BTreeSet::from([2i64])); // Tuesday(2)#2
-        let mut exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Star], vec![Star], vec![Star]);
+        let mut exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Star],
+            vec![Star],
+            vec![Star],
+        );
         exp.nth_weekday_of_month = nth;
         // 2024-01-01 is Monday, so Tuesdays are Jan 2, 9, 16, 23, 30. 2nd Tuesday = Jan 9.
         let cur = dt(2024, 1, 1, 0, 0, 0);
@@ -786,7 +935,13 @@ mod tests {
     fn nth_weekday_of_month_last_prev() {
         let mut nth = BTreeMap::new();
         nth.insert(5i64, BTreeSet::from([NTH_LAST])); // last Friday(5)
-        let mut exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Star], vec![Star], vec![Star]);
+        let mut exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Star],
+            vec![Star],
+            vec![Star],
+        );
         exp.nth_weekday_of_month = nth;
         // Last Friday of January 2024 is Jan 26.
         let cur = dt(2024, 2, 1, 0, 0, 0);
@@ -798,7 +953,13 @@ mod tests {
     #[test]
     fn nearest_weekday_next() {
         // day 1 of Jan 2024 is a Monday already, so 1W == Jan 1.
-        let mut exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Num(1)], vec![Star], vec![Star]);
+        let mut exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Num(1)],
+            vec![Star],
+            vec![Star],
+        );
         exp.nearest_weekday = true;
         let cur = dt(2023, 12, 15, 0, 0, 0);
         let next = calc_next(cur, &exp, &opts(), false).unwrap();
@@ -809,7 +970,13 @@ mod tests {
     fn nearest_weekday_saturday_shifts_back() {
         // Sep 1 2024 is a Sunday -> nearest weekday should be Sep 2 (Monday) per croniter's
         // rule (Sunday not at month end shifts forward to Monday).
-        let mut exp = unix_exp(vec![Num(0)], vec![Num(0)], vec![Num(1)], vec![Star], vec![Star]);
+        let mut exp = unix_exp(
+            vec![Num(0)],
+            vec![Num(0)],
+            vec![Num(1)],
+            vec![Star],
+            vec![Star],
+        );
         exp.nearest_weekday = true;
         let cur = dt(2024, 8, 15, 0, 0, 0);
         let next = calc_next(cur, &exp, &opts(), false).unwrap();
@@ -835,7 +1002,15 @@ mod tests {
                 vec![Num(2099)],
             ],
             nth_weekday_of_month: BTreeMap::new(),
-            expressions: vec!["0".into(), "0".into(), "1".into(), "1".into(), "*".into(), "0".into(), "2099".into()],
+            expressions: vec![
+                "0".into(),
+                "0".into(),
+                "1".into(),
+                "1".into(),
+                "*".into(),
+                "0".into(),
+                "2099".into(),
+            ],
             nearest_weekday: false,
         };
         let cur = dt(2024, 1, 1, 0, 0, 0);
@@ -859,7 +1034,15 @@ mod tests {
                 vec![Num(1970)],
             ],
             nth_weekday_of_month: BTreeMap::new(),
-            expressions: vec!["0".into(), "0".into(), "1".into(), "1".into(), "*".into(), "0".into(), "1970".into()],
+            expressions: vec![
+                "0".into(),
+                "0".into(),
+                "1".into(),
+                "1".into(),
+                "*".into(),
+                "0".into(),
+                "1970".into(),
+            ],
             nearest_weekday: false,
         };
         let cur = dt(2024, 1, 1, 0, 0, 0);
@@ -893,19 +1076,32 @@ mod tests {
 mod debug_probe {
     use super::*;
     use crate::expr::Expr::{Num, Star};
-    use std::collections::{BTreeMap};
+    use std::collections::BTreeMap;
 
     #[test]
     fn probe_union() {
-        let exprs = vec!["0".into(),"0".into(),"1".into(),"*".into(),"1".into()];
+        let exprs = vec!["0".into(), "0".into(), "1".into(), "*".into(), "1".into()];
         let exp = Expanded {
-            fields: vec![vec![Num(0)], vec![Num(0)], vec![Num(1)], vec![Star], vec![Num(1)]],
+            fields: vec![
+                vec![Num(0)],
+                vec![Num(0)],
+                vec![Num(1)],
+                vec![Star],
+                vec![Num(1)],
+            ],
             nth_weekday_of_month: BTreeMap::new(),
             expressions: exprs,
             nearest_weekday: false,
         };
-        let o = CalcOptions { day_or: true, implement_cron_bug: false, max_years_between_matches: 50 };
-        let cur = NaiveDate::from_ymd_opt(2024,1,1).unwrap().and_hms_opt(0,0,0).unwrap();
+        let o = CalcOptions {
+            day_or: true,
+            implement_cron_bug: false,
+            max_years_between_matches: 50,
+        };
+        let cur = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
 
         let fields = exp.fields.clone();
         let mut nth_t1 = exp.nth_weekday_of_month.clone();
@@ -934,16 +1130,35 @@ mod debug_probe2 {
 
     #[test]
     fn probe_dom_list() {
-        let exprs = vec!["03".into(),"03".into(),"16,30".into(),"*".into(),"*".into()];
+        let exprs = vec![
+            "03".into(),
+            "03".into(),
+            "16,30".into(),
+            "*".into(),
+            "*".into(),
+        ];
         // fields order: minute,hour,day,month,dow
         let exp = Expanded {
-            fields: vec![vec![Num(0)], vec![Num(3)], vec![Num(16), Num(30)], vec![Star], vec![Star]],
+            fields: vec![
+                vec![Num(0)],
+                vec![Num(3)],
+                vec![Num(16), Num(30)],
+                vec![Star],
+                vec![Star],
+            ],
             nth_weekday_of_month: BTreeMap::new(),
             expressions: exprs,
             nearest_weekday: false,
         };
-        let o = CalcOptions { day_or: true, implement_cron_bug: false, max_years_between_matches: 50 };
-        let cur = NaiveDate::from_ymd_opt(2013,3,1).unwrap().and_hms_opt(12,17,34).unwrap();
+        let o = CalcOptions {
+            day_or: true,
+            implement_cron_bug: false,
+            max_years_between_matches: 50,
+        };
+        let cur = NaiveDate::from_ymd_opt(2013, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 17, 34)
+            .unwrap();
         let next = calc_next(cur, &exp, &o, false);
         eprintln!("next = {:?}", next);
     }

@@ -50,6 +50,9 @@ except ImportError:
 
 OPS = ["next", "prev", "current", "validate", "expand", "range", "match", "match_range"]
 
+# A case slower than this is reported separately rather than silently dragging the rate.
+SLOW_CASE_SECONDS = 5.0
+
 DST_TZS = ["America/New_York", "Europe/London", "Australia/Sydney"]
 
 # A handful of real DST transition instants (UTC-naive wall clock, local to
@@ -338,6 +341,10 @@ def run_oracle(op: str, expr: str, naive: dt.datetime, tz: str | None,
                 ret_type=dt.datetime,
                 day_or=args.get("day_or", True),
                 exclude_ends=args.get("exclude_ends", False),
+                # Must be forwarded: with second_at_beginning the leading field is
+                # seconds, so the two sides otherwise parse different expressions and
+                # every generated 6-field case looks like a divergence.
+                second_at_beginning=args.get("second_at_beginning", False),
             ))
             return ("ok", [d.strftime("%Y-%m-%dT%H:%M:%S.%f") for d in items])
 
@@ -376,11 +383,22 @@ def norm_datetime_str(s):
     if not isinstance(s, str):
         return s
     s2 = s
-    # split off timezone offset if present (+HH:MM / -HH:MM at the end)
+    # Split off the timezone offset if present, and normalise its shape. The oracle
+    # formats with %z ("+0000") while the port emits "+00:00"; those denote the same
+    # offset, and comparing them raw flags every timezone-aware case as a divergence,
+    # which buries the real ones.
     tz_suffix = ""
     if len(s2) >= 6 and s2[-6] in "+-" and s2[-3] == ":":
         tz_suffix = s2[-6:]
         s2 = s2[:-6]
+    elif len(s2) >= 5 and s2[-5] in "+-" and s2[-4:].isdigit():
+        tz_suffix = f"{s2[-5:-2]}:{s2[-2:]}"
+        s2 = s2[:-5]
+    elif s2.endswith("Z"):
+        tz_suffix = "+00:00"
+        s2 = s2[:-1]
+    if tz_suffix in ("+00:00", "-00:00"):
+        tz_suffix = "+00:00"
     if "." in s2:
         head, frac = s2.split(".", 1)
         frac = frac.rstrip("0")
@@ -421,7 +439,12 @@ def gen_case(rng: random.Random) -> dict:
         "second_at_beginning": rng.random() < 0.2,
         "implement_cron_bug": rng.random() < 0.1,
         "max_years_between_matches": rng.choice([None, 1, 5, 50]),
-        "hash_id": rng.choice([None, "abc", "worker-1"]) if rng.random() < 0.15 else None,
+        # Bytes, not str. croniter's `expand()` classmethod feeds hash_id straight to
+        # binascii.crc32 without encoding it, so a str raises TypeError there while the
+        # constructor accepts one -- an asymmetry in the oracle, not a port behaviour.
+        # The port's hash_id is `Option<&[u8]>` and cannot be a str at all, so generating
+        # bytes is what actually compares the two implementations.
+        "hash_id": rng.choice([None, b"abc", b"worker-1"]) if rng.random() < 0.15 else None,
         "exclude_ends": rng.random() < 0.3,
     }
     stop_naive = None
@@ -437,6 +460,15 @@ def gen_case(rng: random.Random) -> dict:
 
 
 def case_to_wire(case: dict) -> dict:
+    # The wire carries hash_id hex-encoded, because croniter hashes arbitrary bytes and
+    # not every byte string is valid UTF-8. Sending the old plain `hash_id` field means
+    # the port silently sees no hash_id at all, which turns e.g. `@yearly` into literal
+    # "0 0 1 1 *" on one side and a hashed schedule on the other.
+    args = dict(case["args"])
+    hash_id = args.pop("hash_id", None)
+    if hash_id is not None:
+        raw = hash_id if isinstance(hash_id, bytes) else str(hash_id).encode("UTF-8")
+        args["hash_id_hex"] = raw.hex()
     return {
         "op": case["op"],
         "expr": case["expr"],
@@ -445,7 +477,7 @@ def case_to_wire(case: dict) -> dict:
         "ret": case["ret"],
         "n": case["n"],
         "stop": case["stop_naive"].isoformat() if case["stop_naive"] else None,
-        "args": case["args"],
+        "args": args,
     }
 
 
@@ -460,6 +492,15 @@ def run_one(port: Port, case: dict):
         port_status = ("ok", port_resp.get("value"))
     else:
         port_status = ("err", port_resp.get("error"), port_resp.get("message"))
+
+    # The `validate` wire op reports an invalid expression by *raising*, because that is
+    # what its two real callers need: the bridge's `__init__` has to reproduce croniter's
+    # eager `_expand()`, and the bridge's `is_valid` catches the raise and returns False.
+    # `croniter.is_valid()` on the oracle side answers with a bool instead. A raise here
+    # and a `False` there are the same verdict, so normalise before comparing rather than
+    # reporting every rejected expression as a divergence.
+    if case["op"] == "validate" and oracle_result == ("ok", False) and port_status[0] == "err":
+        port_status = ("ok", False)
 
     verdict = "match"
     detail = ""
@@ -517,6 +558,7 @@ def main():
 
     total = 0
     divergences: list[str] = []
+    slow_cases: list[tuple[float, str]] = []
     warnings = 0
     detail_cap = 200
     start_t = time.monotonic()
@@ -524,6 +566,7 @@ def main():
     try:
         while time.monotonic() - start_t < args.seconds:
             case = gen_case(rng)
+            case_t0 = time.monotonic()
             try:
                 wire, oracle_result, port_status, verdict, detail = run_one(port, case)
             except Exception as exc:  # noqa: BLE001 - keep the loop alive, log the crash
@@ -532,6 +575,14 @@ def main():
                 wire = case_to_wire(case)
                 oracle_result = None
                 port_status = None
+            case_secs = time.monotonic() - case_t0
+
+            # A generated `croniter_range` can span decades at one-second granularity,
+            # which is tens of millions of results on both sides. That is a property of
+            # the generator, not a divergence -- but it dominates the run's throughput,
+            # so record it instead of leaving an unexplained stall in the rate.
+            if case_secs >= SLOW_CASE_SECONDS:
+                slow_cases.append((round(case_secs, 1), json.dumps(case_to_wire(case), sort_keys=True)))
 
             total += 1
             case_repr = json.dumps(wire, sort_keys=True)
@@ -567,8 +618,16 @@ def main():
     rate = total / elapsed if elapsed else 0.0
     summary = (
         f"\n# SUMMARY cases={total} elapsed_s={elapsed:.2f} rate_per_s={rate:.1f} "
-        f"divergences={len(divergences)} warnings={warnings}\n"
+        f"divergences={len(divergences)} warnings={warnings} slow_cases={len(slow_cases)}\n"
     )
+    if slow_cases:
+        summary += (
+            f"# {len(slow_cases)} case(s) took >={SLOW_CASE_SECONDS}s and dominate the rate above.\n"
+            "# These are generator artefacts (a range spanning years at second granularity\n"
+            "# is tens of millions of results on both sides), not divergences.\n"
+        )
+        for secs, repr_ in sorted(slow_cases, reverse=True)[:5]:
+            summary += f"#   {secs}s {repr_}\n"
     print(summary)
 
     args.log.parent.mkdir(parents=True, exist_ok=True)

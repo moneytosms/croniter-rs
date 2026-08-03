@@ -14,6 +14,12 @@ path = "src/lib.rs"
 name = "croniter-conformance"
 path = "src/bin/conformance.rs"
 
+# Raw per-iteration timings for bench/compare.py. Separate from `cargo bench` because
+# the cross-language comparison needs the sample distribution, not divan's aggregates.
+[[bin]]
+name = "bench_runner"
+path = "src/bin/bench_runner.rs"
+
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
 chrono-tz = { version = "0.10.4", features = ["serde"] }

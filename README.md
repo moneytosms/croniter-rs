@@ -41,15 +41,34 @@ Port Mortem Rule 05 forbids the port linking or FFI-ing into the Python runtime,
 is no PyO3 here and no embedded interpreter. Correctness is established two ways.
 
 **Golden corpus (primary).** `tools/extract_corpus/` runs the original Python suite once,
-offline, under instrumentation that records every call it makes and what Python returned
-or raised. The result is `tests/port/corpus.json`. `tests/corpus_replay.rs` replays it in
+offline, under instrumentation that records every call it makes — expression, start
+instant, timezone, every constructor keyword — together with what Python returned or
+raised. The result is `tests/port/corpus.json`. `tests/corpus_replay.rs` replays it in
 pure Rust. Python is a build-time data source and never a runtime dependency.
+
+> **15,824 / 15,824 records match (100.00%).**
+>
+> Of the 15,838 records extracted, 14 are excluded *by name* and reported separately by
+> the test rather than counted as passes: 10 use croniter's `R` random syntax and have no
+> stable answer to check against (§12), and 4 are calls that cannot be constructed against
+> the Rust API at all — a bad `ret_type`, a `dict` as `hash_id`, mismatched `croniter_range`
+> bound types (§15).
 
 **Conformance bridge (secondary).** `tools/bridge/croniter/` is a pure-Python shim that
 satisfies `import croniter` and forwards each call to a long-lived `croniter-conformance`
 subprocess over line-delimited JSON. This runs the byte-identical original test suite
 against the port. Python calls the port as an external process; the port contains no
 Python. See `DECISIONS.md` §1 for the full reasoning.
+
+> **246–247 of 248 tests pass** (plus all 92 subtests). Every failure is in
+> `test_croniter_random.py`, and the count varies run to run because the values are drawn
+> randomly: the bridge is stateless, so an `R` expression re-draws on each call instead of
+> being fixed at construction. That is a property of the transport, not of the port — the
+> crate's own API holds the expansion for the object's lifetime. See §16.
+
+**Differential fuzzing (continuous).** `fuzz/harness.py` generates random expressions,
+start instants and DST-boundary cases, runs each against both the pinned Python and the
+port, and compares. Latest run: **2,681 cases, 0 divergences** (`fuzz/log.txt`).
 
 `tests/original/` is a verbatim copy of the upstream suite. `tests/original/HASHES.txt`
 carries per-file SHA-256, and `.port-mortem.toml` records the aggregate. Nothing in it was
@@ -62,19 +81,38 @@ src/expand.rs   cron expression parser        (croniter _expand)
 src/calc.rs     next/prev search, naive time  (croniter _calc)
 src/tz.rs       DST gap and fold resolution   (croniter _add_tzinfo)
 src/lib.rs      public API and the DST tail   (croniter class)
-src/bin/        conformance JSON server
+src/bin/        conformance JSON server, benchmark sample runner
 tests/original/ upstream suite, unmodified, hash-pinned
 tests/port/     golden corpus
 tools/          corpus extractor and Python bridge
 fuzz/           differential fuzz harness and log
-bench/          benchmark methodology and results
+bench/          benchmark methodology, comparison script, results
 ```
+
+## Performance
+
+Full numbers and their caveats are in [`bench/results.json`](./bench/results.json) and
+[`bench/methodology.md`](./bench/methodology.md). Reproduce with `python3 bench/compare.py`.
+
+| workload | median speedup vs Python |
+| --- | --- |
+| `parse` | x6 – x30 |
+| `next_once` | x10 – x52 |
+| `walk_1000` (throughput) | x45 – x92 |
+| `range_one_year` | x81 |
+| `dst_transition_walk` | x51 |
+
+Startup 36.5 ms → 1.6 ms; peak RSS 15.6 MB → 3.7 MB. Read `methodology.md` before quoting
+any of these: the startup comparison is an interpreter boot against a compiled binary and
+is not like-for-like, the DST walk is where the port is *least* ahead, and every number is
+single-machine with no CPU pinning.
 
 ## Divergences
 
 Every non-trivial difference from the Python is written up in
-[`DECISIONS.md`](./DECISIONS.md), including the one known behavioural divergence
-(day-of-month/day-of-week union across a DST transition, §5).
+[`DECISIONS.md`](./DECISIONS.md) — 16 entries, including the one known behavioural
+divergence (day-of-month/day-of-week union across a DST transition, §5), the four calls
+Rust's type system makes unconstructible (§15), and the bridge's statelessness (§16).
 
 ## Licence
 
