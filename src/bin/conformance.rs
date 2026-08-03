@@ -257,6 +257,44 @@ fn handle(req: Request) -> Result<Value, CroniterError> {
             ))
         }
 
+        // White-box op. 118 assertions in the original suite read the parse tree
+        // directly (`.expanded` 68 times, `croniter.expand` 37, `HashExpander` 13), so
+        // the bridge needs a way to hand it back in croniter's own shape.
+        "expand" => {
+            let expanded = croniter::expand::expand(
+                &req.expr,
+                req.args.hash_id.as_ref().map(|h| h.as_bytes()),
+                req.args.second_at_beginning,
+                None,
+                None,
+            )?;
+            Ok(json!({
+                "expanded": expanded
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        Value::Array(
+                            field
+                                .iter()
+                                .map(|e| match e {
+                                    croniter::Expr::Star => json!("*"),
+                                    croniter::Expr::Last => json!("l"),
+                                    croniter::Expr::Num(n) => json!(n),
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                "nth_weekday_of_month": expanded
+                    .nth_weekday_of_month
+                    .iter()
+                    .map(|(dow, set)| (dow.to_string(), set.iter().copied().collect::<Vec<_>>()))
+                    .collect::<std::collections::BTreeMap<_, _>>(),
+                "expressions": expanded.expressions,
+                "nearest_weekday": expanded.nearest_weekday,
+            }))
+        }
+
         other => Err(CroniterError::Other(format!("unknown op {other:?}"))),
     }
 }

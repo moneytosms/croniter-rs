@@ -5,7 +5,7 @@
 //! of that tail, plus the `_add_tzinfo` / `_is_successor` / `_timezone_delta` helpers
 //! (croniter.py:161-233).
 
-use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Offset, TimeZone, Utc};
 use chrono_tz::Tz;
 
 /// Result of re-attaching a timezone to a naive local time.

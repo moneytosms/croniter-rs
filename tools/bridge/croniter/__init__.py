@@ -291,10 +291,24 @@ class croniter:
         self.cur = 0.0
         self.set_current(start_time, force=True)
         self._is_prev = is_prev
+        self._expanded_cache: Optional[list] = None
 
         # Eagerly validate against the Rust engine, mirroring the original's
         # eager `_expand()` call inside __init__ (bad cron -> raises here).
         self._request("validate", ret="datetime")
+
+    @property
+    def expanded(self) -> list:
+        """Lazily fetched, cached: the normalized per-field expansion of this
+        instance's cron expression (list of lists of int | '*' | 'l'), via
+        the `expand` wire op. Mirrors croniter-python's `.expanded` attribute."""
+        if self._expanded_cache is None:
+            self._expanded_cache, _ = croniter.expand(
+                self.expr_format,
+                hash_id=self._hash_id,
+                second_at_beginning=self.second_at_beginning,
+            )
+        return self._expanded_cache
 
     # -- wire protocol helpers ------------------------------------------------
 
@@ -438,6 +452,26 @@ class croniter:
         if c[0][0] == 0:
             c.pop(0)
         return tuple(i[0] for i in c)
+
+    @classmethod
+    def expand(cls, expr_format, hash_id=None, second_at_beginning=False, **_ignored):
+        """Returns `(expanded, nth_weekday_of_month)`, exactly as
+        croniter-python's `expand()` does (see its docstring for shape).
+        `**_ignored` swallows original-only kwargs (from_timestamp,
+        from_timestamp_tz, strict, strict_year) the Rust `expand` op doesn't
+        take yet; none of the original suite's call sites pass them."""
+        if hash_id is not None:
+            if not isinstance(hash_id, (bytes, str)):
+                raise TypeError("hash_id must be bytes or UTF-8 string")
+            if not isinstance(hash_id, bytes):
+                hash_id = hash_id.encode("UTF-8")
+        args = {"second_at_beginning": bool(second_at_beginning)}
+        if hash_id is not None:
+            args["hash_id"] = hash_id.decode("UTF-8")
+        value = _bridge.call(op="expand", expr=expr_format, args=args)
+        expanded = [list(field) for field in value["expanded"]]
+        nth_weekday_of_month = {int(k): set(v) for k, v in value["nth_weekday_of_month"].items()}
+        return expanded, nth_weekday_of_month
 
     @classmethod
     def is_valid(
