@@ -275,7 +275,7 @@ through the bridge, the suite's own hashes and manifest, a Docker build-and-run,
 | 03, single-command build and runnable artifact | `make build` and a Dockerfile, both exercised in CI |
 | 04, new code only | no pre-existing Rust port of croniter was used; all port code written in the window |
 | 05, no source-language runtime | no PyO3, no `libpython`, no FFI; `cargo test` passes with no Python installed |
-| 06, team size | solo entry |
+| 06, team size | two people, Nidhi Rakesh and Srimoneyshankar Ajith |
 | 07, one track | Track D, Python to Rust, declared in `.port-mortem.toml` |
 | 08, public repo, OSI licence | public, MIT |
 | 09, AI tools | used; the receipts asked for are `DECISIONS.md`, the fuzz log, and the untouched suite, all present |
