@@ -697,15 +697,17 @@ pub fn croniter_range_iter(
         ..Default::default()
     };
 
-    let localize = |d: NaiveDateTime, what: &str| -> Result<DateTime<Tz>> {
-        let tz = tz.expect("only called when a timezone is present");
+    // Takes the timezone rather than closing over the `Option`, so "only called when a
+    // timezone is present" is enforced by the match arms binding it instead of by an
+    // `expect` that a later edit could invalidate silently.
+    let localize = |tz: Tz, d: NaiveDateTime, what: &str| -> Result<DateTime<Tz>> {
         d.and_local_timezone(tz)
             .earliest()
             .ok_or_else(|| CroniterError::Other(format!("range {what} not representable in tz")))
     };
 
     let cron = match tz {
-        Some(_) => Croniter::with_options(expr, None, Some(localize(start, "start")?), opts)?,
+        Some(tz) => Croniter::with_options(expr, None, Some(localize(tz, start, "start")?), opts)?,
         None => Croniter::with_options(expr, Some(start), None, opts)?,
     };
 
@@ -713,7 +715,7 @@ pub fn croniter_range_iter(
     // the same ordering; across a DST boundary they are not, and Python is comparing
     // aware datetimes, i.e. instants.
     let stop_ts = match tz {
-        Some(_) => datetime_to_timestamp(localize(stop, "stop")?),
+        Some(tz) => datetime_to_timestamp(localize(tz, stop, "stop")?),
         None => naive_to_timestamp(stop),
     };
 

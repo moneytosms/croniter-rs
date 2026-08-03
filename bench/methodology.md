@@ -59,8 +59,14 @@ expensive paths rather than to flatter the port:
 - Throughput-only numbers are misleading here. A cron search is a loop over a small,
   bounded state space, so the port's advantage is mostly interpreter overhead rather than
   algorithmic. The p99 figures matter more than the medians, and both are reported.
-- The DST workload is where the port is *least* ahead, because `calc_with_tz` re-runs the
-  naive search when a local time does not exist. It is in the table rather than omitted.
+- The DST workload is in the table because it is the expensive path — `calc_with_tz`
+  re-runs the naive search when a local time does not exist — not because it flatters the
+  port. On the current run-set it happens to score well (x117); on earlier run-sets it was
+  the *lowest* of the group. That swing is itself the point: treat any single workload's
+  ratio as noisy and read the range.
+- The narrowest margin is `parse` on `*/5 9-17 * * mon-fri` (x8 median), the expression
+  with the most alias and range expansion. Reported because a summary that quoted only the
+  x185 `range_one_year` figure would be dishonest.
 - Startup comparison flatters the port structurally: a compiled binary versus an
   interpreter import is not an apples-to-apples measurement, and it is reported only
   because the submission asks for it.

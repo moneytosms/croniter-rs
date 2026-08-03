@@ -12,7 +12,7 @@ test suite.
 | --- | --- |
 | Original test suite, unmodified | **248 / 248** + 92 subtests |
 | Golden-corpus equivalence | **15,827 / 15,827** (100.00%) |
-| Differential fuzzing | **0 divergences** across 4 seeds |
+| Differential fuzzing | **0 divergences** in 14,610 logged cases |
 | Property tests | **88,000 generated cases** |
 | `unsafe` blocks | **0** |
 | `unwrap`/`panic` outside tests | **0** |
@@ -91,7 +91,11 @@ Python. See `DECISIONS.md` §1 for the full reasoning.
 
 **Differential fuzzing (continuous).** `fuzz/harness.py` generates random expressions,
 start instants and DST-boundary cases, runs each against both the pinned Python and the
-port, and compares. Latest run: **4,184 cases, 0 divergences** (`fuzz/log.txt`).
+port, and compares. The committed log (`fuzz/log.txt`) is the seed-11 run:
+**14,610 cases, 0 divergences, 0 warnings**, 149.5 cases/s. Seeds 12, 13 and 21 were run
+the same way and also came back clean; only the last run's log is committed, and its
+header records the seed and the port commit it ran against. CI runs a fresh 90-second
+seed on every push and fails the build on any divergence.
 
 **Property tests (independent).** The three checks above all measure agreement *with
 Python*, which says nothing about a bug both share. `tests/properties.rs` asserts what a
@@ -111,7 +115,7 @@ edited, and CI verifies the hashes on every push.
 | 2 | One-command build, runnable artifact | `make build`, or `docker build -t croniter-rs . && docker run --rm croniter-rs` — built and run in CI |
 | 3 | Original suite, hash-pinned, passing | [`tests/original/`](./tests/original) + [`HASHES.txt`](./tests/original/HASHES.txt); `make test-original` → 248/248 |
 | 4 | Differential fuzz harness + log | [`fuzz/harness.py`](./fuzz/harness.py), [`fuzz/log.txt`](./fuzz/log.txt) |
-| 5 | DECISIONS.md | [18 entries](./DECISIONS.md) |
+| 5 | DECISIONS.md | [19 entries](./DECISIONS.md) |
 | 6 | Benchmark report + methodology | [`bench/methodology.md`](./bench/methodology.md), [`bench/results.json`](./bench/results.json), [`bench/compare.py`](./bench/compare.py) |
 | 7 | 5-minute demo video | `make demo` is the scripted walkthrough it records; **the recording itself is not yet in the repo** |
 
@@ -143,18 +147,32 @@ bench/          benchmark methodology, comparison script, results
 Full numbers and their caveats are in [`bench/results.json`](./bench/results.json) and
 [`bench/methodology.md`](./bench/methodology.md). Reproduce with `python3 bench/compare.py`.
 
-| workload | median speedup vs Python |
-| --- | --- |
-| `parse` | x6 – x30 |
-| `next_once` | x10 – x52 |
-| `walk_1000` (throughput) | x45 – x92 |
-| `range_one_year` | x81 |
-| `dst_transition_walk` | x51 |
+Measured 2026-08-03, 2,000 samples per workload per expression, CPython 3.12.3 against
+`--release` + LTO on rustc 1.97.1. Range is across the seven expressions in the set.
 
-Startup 36.5 ms → 1.6 ms; peak RSS 15.6 MB → 3.7 MB. Read `methodology.md` before quoting
-any of these: the startup comparison is an interpreter boot against a compiled binary and
-is not like-for-like, the DST walk is where the port is *least* ahead, and every number is
-single-machine with no CPU pinning.
+| workload | expressions | median speedup | p99 speedup |
+| --- | --- | --- | --- |
+| `parse` | 7 | x8 – x57 | x9 – x189 |
+| `next_once` | 7 | x12 – x63 | x11 – x117 |
+| `prev_once` | 6 | x13 – x88 | x17 – x147 |
+| `walk_1000` (throughput) | 3 | x66 – x114 | x91 – x134 |
+| `range_one_year` | 1 | x185 | x172 |
+| `dst_transition_walk` | 1 | x117 | x115 |
+
+| | Python | Rust | |
+| --- | --- | --- | --- |
+| Startup to first result | 55.8 ms | 1.4 ms | x39 |
+| Peak RSS (`walk_1000`) | 17.4 MB | 3.9 MB | 4.4x smaller |
+
+Read [`methodology.md`](./bench/methodology.md) before quoting any of these. Three caveats
+matter most: the startup comparison is an interpreter boot measured against a compiled
+binary and is **not** like-for-like; the spread within a workload is wide, so the range
+is reported rather than a single flattering figure; and every number is single-machine
+with no CPU pinning, on a cloud VM, and moves run to run. They are order-of-magnitude
+evidence, not a regression baseline.
+
+The narrowest margin is `parse` on `*/5 9-17 * * mon-fri` (x8) — the expression with the
+most alias and range expansion, where the port does the most string work per call.
 
 ## Divergences
 
@@ -174,11 +192,26 @@ assumed, so a chrono-tz release that extends the table will say so.
 
 ## Safety and error handling
 
-No `unsafe`, anywhere. Library code contains no `unwrap`, `expect`, `panic!` or
-`unreachable!` outside test modules: every fallible path returns `Result<_, CroniterError>`,
-and the three places that once relied on a preceding guard to make an `unwrap` safe now
-carry the invariant in the type instead. `cargo clippy --all-targets -- -D warnings` is
-clean.
+No `unsafe`, anywhere. Library code contains no `unwrap`, `panic!` or `unreachable!`
+outside test modules — every fallible path returns `Result<_, CroniterError>`, and the
+places that once relied on a preceding guard to make an `unwrap` safe now carry the
+invariant in the type instead. `cargo clippy --all-targets -- -D warnings` is clean.
+
+Seven `expect` calls remain in library code, and they are deliberate rather than
+overlooked. Each constructs a value from a literal that cannot fail — the 1970-01-01 date
+and midnight time (`lib.rs:73,75`), the Unix epoch (`lib.rs:319`), a literal `h/m/s` triple
+(`calc.rs:160`), and three `str::parse` calls on input a preceding `only_int` check has
+already proved is decimal digits (`expand.rs:681,696,699`). None depends on a caller
+honouring a contract, and none is reachable by any input. The message on each states the
+invariant it relies on. Verify with:
+
+```sh
+rg -n '\.unwrap\(\)|\.expect\(|panic!|unreachable!|unsafe' src/ --glob '!bin/'
+```
+
+`src/bin/` is excluded from that count throughout: the conformance server and the
+benchmark sample runner are verification tooling, not part of the published crate
+(`Cargo.toml` `exclude`), and holding them to the crate's bar would inflate the figure.
 
 ## Licence
 
