@@ -5,6 +5,20 @@ edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
 description = "Rust port of pallets-eco/croniter: cron expression parsing and datetime iteration"
+readme = "README.md"
+# This port. The Python it was ported from is recorded in .port-mortem.toml.
+repository = "https://github.com/moneytosms/croniter-rs"
+documentation = "https://docs.rs/croniter"
+keywords = ["cron", "crontab", "schedule", "scheduler", "datetime"]
+categories = ["date-and-time", "parser-implementations"]
+exclude = [
+    # Build-time verification data, not part of the crate. corpus.json alone is 4.4 MB.
+    "tests/original/*",
+    "tests/port/*",
+    "tools/*",
+    "fuzz/*",
+    "bench/*",
+]
 
 [lib]
 name = "croniter"
@@ -13,6 +27,12 @@ path = "src/lib.rs"
 [[bin]]
 name = "croniter-conformance"
 path = "src/bin/conformance.rs"
+
+# Raw per-iteration timings for bench/compare.py. Separate from `cargo bench` because
+# the cross-language comparison needs the sample distribution, not divan's aggregates.
+[[bin]]
+name = "bench_runner"
+path = "src/bin/bench_runner.rs"
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
@@ -23,6 +43,7 @@ serde_json = "1.0.151"
 
 [dev-dependencies]
 divan = "0.1.21"
+proptest = "1.11.0"
 
 [[bench]]
 name = "schedule"

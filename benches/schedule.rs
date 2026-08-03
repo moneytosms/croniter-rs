@@ -69,7 +69,7 @@ fn range_one_year() -> usize {
         .expect("valid date")
         .and_hms_opt(0, 0, 0)
         .expect("valid time");
-    croniter_range(from, to, "0 0 * * *", true, false)
+    croniter_range(from, to, "0 0 * * *", true, false, false)
         .map(|v| v.len())
         .unwrap_or(0)
 }

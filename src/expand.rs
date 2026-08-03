@@ -65,7 +65,9 @@ fn alphaconv(field_index: usize, key: &str, expressions: &[String]) -> Result<St
         DOW_FIELD => dow_alpha(key).map(|v| v.to_string()),
         _ => None,
     };
-    resolved.ok_or_else(|| CroniterError::NotAlpha(format!("[{}] is not acceptable", expressions.join(" "))))
+    resolved.ok_or_else(|| {
+        CroniterError::NotAlpha(format!("[{}] is not acceptable", expressions.join(" ")))
+    })
 }
 
 /// `croniter.value_alias` (croniter.py:923-939). `LOWMAP` is `({}, {}, {0:1}, {0:1}, {7:0}, {}, {})`.
@@ -78,9 +80,12 @@ fn value_alias(val: i64, field_index: usize, len_expressions: usize) -> i64 {
     };
     if let Some((from, to)) = lowmap_entry {
         if val == from {
-            let skip = (matches!(field_index, DAY_FIELD | MONTH_FIELD) && len_expressions == UNIX_CRON_LEN)
-                || (matches!(field_index, MONTH_FIELD | DOW_FIELD) && len_expressions == SECOND_CRON_LEN)
-                || (matches!(field_index, DAY_FIELD | MONTH_FIELD | DOW_FIELD) && len_expressions == YEAR_CRON_LEN);
+            let skip = (matches!(field_index, DAY_FIELD | MONTH_FIELD)
+                && len_expressions == UNIX_CRON_LEN)
+                || (matches!(field_index, MONTH_FIELD | DOW_FIELD)
+                    && len_expressions == SECOND_CRON_LEN)
+                || (matches!(field_index, DAY_FIELD | MONTH_FIELD | DOW_FIELD)
+                    && len_expressions == YEAR_CRON_LEN);
             if !skip {
                 return to;
             }
@@ -177,11 +182,16 @@ fn special_dow_match(s: &str) -> Option<DowSpecial> {
         if !he_valid(he) {
             return None;
         }
-        return Some(DowSpecial::Nth { he: he.to_string(), nth_str: last.to_string() });
+        return Some(DowSpecial::Nth {
+            he: he.to_string(),
+            nth_str: last.to_string(),
+        });
     }
     if let Some(rest) = s.strip_prefix('l') {
         if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
-            return Some(DowSpecial::Last { n_str: rest.to_string() });
+            return Some(DowSpecial::Last {
+                n_str: rest.to_string(),
+            });
         }
     }
     None
@@ -231,7 +241,12 @@ fn match_hash_expr(expr: &str) -> Option<HashMatch> {
     if !rest.is_empty() {
         return None;
     }
-    Some(HashMatch { hash_type, range_begin, range_end, divisor })
+    Some(HashMatch {
+        hash_type,
+        range_begin,
+        range_end,
+        divisor,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -267,19 +282,40 @@ fn random_u32() -> u32 {
 }
 
 /// `HashExpander.do`, croniter.py:1502-1512.
-fn hash_do(idx: usize, hash_type: char, hash_id: Option<&[u8]>, range_begin: i64, range_end: i64) -> Result<i64> {
+fn hash_do(
+    idx: usize,
+    hash_type: char,
+    hash_id: Option<&[u8]>,
+    range_begin: i64,
+    range_end: i64,
+) -> Result<i64> {
     let crc: u32 = if hash_type == 'r' {
         random_u32()
     } else {
-        let id = hash_id.ok_or_else(|| CroniterError::BadCron("Hashed definitions must include hash_id".to_string()))?;
+        let id = hash_id.ok_or_else(|| {
+            CroniterError::BadCron("Hashed definitions must include hash_id".to_string())
+        })?;
         crc32(id)
     };
     Ok((((crc as i64) >> idx) % (range_end - range_begin + 1)) + range_begin)
 }
 
 /// `HashExpander._expand_divisor`, croniter.py:1517-1537.
-fn expand_divisor(idx: usize, hash_type: char, divisor: i64, hash_id: Option<&[u8]>, range_begin: i64, range_end: i64) -> Result<String> {
-    let x = hash_do(idx, hash_type, hash_id, range_begin, (range_begin + divisor - 1).min(range_end))?;
+fn expand_divisor(
+    idx: usize,
+    hash_type: char,
+    divisor: i64,
+    hash_id: Option<&[u8]>,
+    range_begin: i64,
+    range_end: i64,
+) -> Result<String> {
+    let x = hash_do(
+        idx,
+        hash_type,
+        hash_id,
+        range_begin,
+        (range_begin + divisor - 1).min(range_end),
+    )?;
     if x == range_end {
         Ok(x.to_string())
     } else {
@@ -293,11 +329,15 @@ fn hash_expand(idx: usize, expr: &str, hash_id: Option<&[u8]>) -> Result<String>
         return Ok(expr.to_string());
     };
     if m.hash_type == 'h' && hash_id.is_none() {
-        return Err(CroniterError::BadCron("Hashed definitions must include hash_id".to_string()));
+        return Err(CroniterError::BadCron(
+            "Hashed definitions must include hash_id".to_string(),
+        ));
     }
     if let (Some(rb), Some(re)) = (m.range_begin, m.range_end) {
         if rb >= re {
-            return Err(CroniterError::BadCron("Range end must be greater than range begin".to_string()));
+            return Err(CroniterError::BadCron(
+                "Range end must be greater than range begin".to_string(),
+            ));
         }
     }
     match (m.range_begin, m.range_end, m.divisor) {
@@ -345,10 +385,17 @@ fn alias_expr(efl: &str, has_hash: bool) -> Option<String> {
 // `croniter._get_low_from_current_date_number`, croniter.py:1336-1360.
 // ---------------------------------------------------------------------------
 
-fn get_low_from_current_date_number(field_index: usize, step: i64, from_timestamp: f64, tz: Option<Tz>) -> Result<i64> {
+fn get_low_from_current_date_number(
+    field_index: usize,
+    step: i64,
+    from_timestamp: f64,
+    tz: Option<Tz>,
+) -> Result<i64> {
     let tz = tz.unwrap_or(chrono_tz::UTC);
     let secs = from_timestamp.floor() as i64;
-    let nsecs = ((from_timestamp - from_timestamp.floor()) * 1_000_000_000.0).round().clamp(0.0, 999_999_999.0) as u32;
+    let nsecs = ((from_timestamp - from_timestamp.floor()) * 1_000_000_000.0)
+        .round()
+        .clamp(0.0, 999_999_999.0) as u32;
     let dt = tz
         .timestamp_opt(secs, nsecs)
         .single()
@@ -410,7 +457,10 @@ fn format_int_set(s: &BTreeSet<i64>) -> String {
 }
 
 fn format_nth_map(m: &std::collections::BTreeMap<i64, BTreeSet<i64>>) -> String {
-    let items: Vec<String> = m.iter().map(|(k, v)| format!("{k}: {}", format_int_set(v))).collect();
+    let items: Vec<String> = m
+        .iter()
+        .map(|(k, v)| format!("{k}: {}", format_int_set(v)))
+        .collect();
     format!("{{{}}}", items.join(", "))
 }
 
@@ -418,12 +468,75 @@ fn format_nth_map(m: &std::collections::BTreeMap<i64, BTreeSet<i64>>) -> String 
 // The parser itself: `croniter._expand` + `croniter.expand`, croniter.py:944-1336.
 // ---------------------------------------------------------------------------
 
+/// croniter's `strict` / `strict_year` cross-validation (croniter.py:1233-1266).
+///
+/// Rejects day/month combinations that can never occur, such as `0 0 31 2 *` (February
+/// 31st). February is treated as having 29 days unless the years in play are known and
+/// none of them is a leap year — either from `strict_year` or from an explicit year
+/// field. Kept out of [`expand`] because it is an opt-in extra check on an
+/// already-parsed expression, exactly as it is in the Python.
+pub fn check_strict(expanded: &Expanded, expr_format: &str, strict_year: &[i64]) -> Result<()> {
+    let days = &expanded.fields[crate::expr::DAY_FIELD];
+    let months = &expanded.fields[crate::expr::MONTH_FIELD];
+    if days.as_slice() == [Expr::Star]
+        || days.as_slice() == [Expr::Last]
+        || months.as_slice() == [Expr::Star]
+    {
+        return Ok(());
+    }
+
+    let int_days: Vec<i64> = days.iter().filter_map(|d| d.as_num()).collect();
+    let int_months: Vec<i64> = months.iter().filter_map(|m| m.as_num()).collect();
+    if int_days.is_empty() || int_months.is_empty() {
+        return Ok(());
+    }
+
+    let mut days_in_month = crate::expr::DAYS.map(i64::from);
+    if int_months.contains(&2) {
+        // "Might be a leap year" is the default; only a known, entirely non-leap set of
+        // years narrows February to 28.
+        let has_leap_year = if !strict_year.is_empty() {
+            strict_year.iter().any(|&y| crate::expr::is_leap(y as i32))
+        } else if expanded.has_year() {
+            let years = &expanded.fields[crate::expr::YEAR_FIELD];
+            let int_years: Vec<i64> = years.iter().filter_map(|y| y.as_num()).collect();
+            years.as_slice() == [Expr::Star]
+                || int_years.is_empty()
+                || int_years.iter().any(|&y| crate::expr::is_leap(y as i32))
+        } else {
+            true
+        };
+        if has_leap_year {
+            days_in_month[1] = 29;
+        }
+    }
+
+    let min_day = int_days.iter().copied().min().unwrap_or(1);
+    let max_possible = int_months
+        .iter()
+        .filter_map(|&m| {
+            usize::try_from(m - 1)
+                .ok()
+                .and_then(|i| days_in_month.get(i))
+        })
+        .copied()
+        .max()
+        .unwrap_or(31);
+
+    if min_day > max_possible {
+        return Err(CroniterError::BadCron(format!(
+            "[{expr_format}] is not acceptable. Day(s) {int_days:?} \
+             can never occur in month(s) {int_months:?}"
+        )));
+    }
+    Ok(())
+}
+
 /// Expand a cron expression into croniter's normalized field-list form.
 ///
-/// Faithful port of `croniter._expand`/`croniter.expand` (classmethods). `strict`/
-/// `strict_year` cross-validation (croniter.py:1233-1267) is intentionally not
-/// exposed: this crate's public contract for `expand` has no such parameters, so
-/// that branch is unreachable from here and is not implemented.
+/// Faithful port of `croniter._expand`/`croniter.expand` (classmethods). The optional
+/// `strict` cross-validation lives in [`check_strict`], mirroring the Python, where it
+/// is a separate opt-in branch rather than part of the parse.
 pub fn expand(
     expr_format: &str,
     hash_id: Option<&[u8]>,
@@ -448,7 +561,8 @@ pub fn expand(
     }
 
     let mut expanded: Vec<Vec<Expr>> = Vec::with_capacity(expressions.len());
-    let mut nth_weekday_of_month: std::collections::BTreeMap<i64, BTreeSet<i64>> = std::collections::BTreeMap::new();
+    let mut nth_weekday_of_month: std::collections::BTreeMap<i64, BTreeSet<i64>> =
+        std::collections::BTreeMap::new();
     let mut nearest_weekday_flag = false;
 
     for field_index in 0..expressions.len() {
@@ -480,16 +594,22 @@ pub fn expand(
                 if let Some(sd) = special_dow_match(&e) {
                     match sd {
                         DowSpecial::Nth { he, nth_str } => {
-                            let nth_val: Option<i64> = nth_str.parse().ok();
-                            let valid = matches!(nth_val, Some(v) if (1..=5).contains(&v));
-                            if !valid {
-                                let shown = nth_val.map(|v| v.to_string()).unwrap_or_else(|| nth_str.clone());
+                            // Parse and range-check in one step, so the accepted value is
+                            // carried by the `Some` arm instead of being re-extracted
+                            // after a separate validity flag.
+                            let parsed: Option<i64> = nth_str.parse().ok();
+                            let Some(nth_val) = parsed.filter(|v| (1..=5).contains(v)) else {
+                                // croniter reports the parsed number when the text was
+                                // numeric at all, and the raw text otherwise.
+                                let shown = parsed
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| nth_str.clone());
                                 return Err(CroniterError::BadCron(format!(
                                     "[{expr_format}] is not acceptable. Invalid day_of_week value: '{shown}'"
                                 )));
-                            }
+                            };
                             e = he;
-                            nth = Some(NthKind::Num(nth_val.unwrap()));
+                            nth = Some(NthKind::Num(nth_val));
                         }
                         DowSpecial::Last { n_str } => {
                             e = n_str;
@@ -556,7 +676,9 @@ pub fn expand(
                     )));
                 }
                 // `int(step)`, croniter.py:1091. Guaranteed to parse: only_int just verified it.
-                let step: i64 = step_str.parse().expect("only_int guarantees a valid decimal integer");
+                let step: i64 = step_str
+                    .parse()
+                    .expect("only_int guarantees a valid decimal integer");
                 if step == 0 {
                     return Err(CroniterError::BadCron(format!(
                         "[{expr_format}] step '{step}' in field {field_index} is not acceptable"
@@ -569,13 +691,19 @@ pub fn expand(
                         )));
                     }
                 }
-                let low_i: i64 = low.parse().expect("only_int guarantees a valid decimal integer");
-                let high_i: i64 = high.parse().expect("only_int guarantees a valid decimal integer");
+                let low_i: i64 = low
+                    .parse()
+                    .expect("only_int guarantees a valid decimal integer");
+                let high_i: i64 = high
+                    .parse()
+                    .expect("only_int guarantees a valid decimal integer");
                 let low_v = value_alias(low_i, field_index, expressions.len());
                 let high_v = value_alias(high_i, field_index, expressions.len());
 
                 if low_v.max(high_v) > min_r.max(max_r) {
-                    return Err(CroniterError::BadCron(format!("{expr_format} is out of bands")));
+                    return Err(CroniterError::BadCron(format!(
+                        "{expr_format} is out of bands"
+                    )));
                 }
 
                 // croniter.py:1130 - "{start}/{step}" collides with an explicit equal range
@@ -589,7 +717,12 @@ pub fn expand(
                 // exact-epoch start deliberately skips the rebase below.
                 if let Some(ts) = from_timestamp {
                     if ts != 0.0 && !start_at_field_max {
-                        low_final = get_low_from_current_date_number(field_index, step, ts, from_timestamp_tz)?;
+                        low_final = get_low_from_current_date_number(
+                            field_index,
+                            step,
+                            ts,
+                            from_timestamp_tz,
+                        )?;
                     }
                 }
 
@@ -646,12 +779,16 @@ pub fn expand(
                 } else if tok == "l" {
                     Expr::Last
                 } else {
-                    let v: i64 = tok
-                        .parse()
-                        .map_err(|_| CroniterError::Other(format!("invalid literal for int() with base 10: '{tok}'")))?;
+                    let v: i64 = tok.parse().map_err(|_| {
+                        CroniterError::Other(format!(
+                            "invalid literal for int() with base 10: '{tok}'"
+                        ))
+                    })?;
                     let v = value_alias(v, field_index, expressions.len());
                     if v < min_r || v > max_r {
-                        return Err(CroniterError::BadCron(format!("[{expr_format}] is not acceptable, out of range")));
+                        return Err(CroniterError::BadCron(format!(
+                            "[{expr_format}] is not acceptable, out of range"
+                        )));
                     }
                     Expr::Num(v)
                 };
@@ -676,7 +813,7 @@ pub fn expand(
                 uniq.push(r);
             }
         }
-        uniq.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
+        uniq.sort_by_key(sort_key);
 
         if uniq.len() == LEN_MEANS_ALL[field_index] {
             // Vixie-cron-bug preservation, croniter.py:1210-1216: an enumerated day-of-month
@@ -688,13 +825,20 @@ pub fn expand(
                 uniq = vec![Expr::Star];
             }
         }
-        let field_result = if uniq.len() == 1 && uniq[0] == Expr::Star { vec![Expr::Star] } else { uniq };
+        let field_result = if uniq.len() == 1 && uniq[0] == Expr::Star {
+            vec![Expr::Star]
+        } else {
+            uniq
+        };
         expanded.push(field_result);
     }
 
     // croniter.py:1220-1231.
     if !nth_weekday_of_month.is_empty() {
-        let dow_vals: BTreeSet<i64> = expanded[DOW_FIELD].iter().filter_map(|e| e.as_num()).collect();
+        let dow_vals: BTreeSet<i64> = expanded[DOW_FIELD]
+            .iter()
+            .filter_map(|e| e.as_num())
+            .collect();
         let nth_keys: BTreeSet<i64> = nth_weekday_of_month.keys().copied().collect();
         let remaining: BTreeSet<i64> = dow_vals.difference(&nth_keys).copied().collect();
         if !remaining.is_empty() && expanded[DOW_FIELD].len() != LEN_MEANS_ALL[DOW_FIELD] {
@@ -709,7 +853,12 @@ pub fn expand(
         }
     }
 
-    Ok(Expanded { fields: expanded, nth_weekday_of_month, expressions, nearest_weekday: nearest_weekday_flag })
+    Ok(Expanded {
+        fields: expanded,
+        nth_weekday_of_month,
+        expressions,
+        nearest_weekday: nearest_weekday_flag,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -747,7 +896,10 @@ mod tests {
     fn six_field_with_seconds() {
         let e = expand("0 0 * * * */15", None, false, None, None).unwrap();
         assert_eq!(e.len(), 6);
-        assert_eq!(f(&e, SECOND_FIELD), &[Expr::Num(0), Expr::Num(15), Expr::Num(30), Expr::Num(45)]);
+        assert_eq!(
+            f(&e, SECOND_FIELD),
+            &[Expr::Num(0), Expr::Num(15), Expr::Num(30), Expr::Num(45)]
+        );
     }
 
     #[test]
@@ -762,21 +914,44 @@ mod tests {
         let e = expand("0-5,10 * * * mon-fri", None, false, None, None).unwrap();
         assert_eq!(
             f(&e, MINUTE_FIELD),
-            &[Expr::Num(0), Expr::Num(1), Expr::Num(2), Expr::Num(3), Expr::Num(4), Expr::Num(5), Expr::Num(10)]
+            &[
+                Expr::Num(0),
+                Expr::Num(1),
+                Expr::Num(2),
+                Expr::Num(3),
+                Expr::Num(4),
+                Expr::Num(5),
+                Expr::Num(10)
+            ]
         );
-        assert_eq!(f(&e, DOW_FIELD), &[Expr::Num(1), Expr::Num(2), Expr::Num(3), Expr::Num(4), Expr::Num(5)]);
+        assert_eq!(
+            f(&e, DOW_FIELD),
+            &[
+                Expr::Num(1),
+                Expr::Num(2),
+                Expr::Num(3),
+                Expr::Num(4),
+                Expr::Num(5)
+            ]
+        );
     }
 
     #[test]
     fn step() {
         let e = expand("*/15 * * * *", None, false, None, None).unwrap();
-        assert_eq!(f(&e, MINUTE_FIELD), &[Expr::Num(0), Expr::Num(15), Expr::Num(30), Expr::Num(45)]);
+        assert_eq!(
+            f(&e, MINUTE_FIELD),
+            &[Expr::Num(0), Expr::Num(15), Expr::Num(30), Expr::Num(45)]
+        );
     }
 
     #[test]
     fn list() {
         let e = expand("1,2,3 * * * *", None, false, None, None).unwrap();
-        assert_eq!(f(&e, MINUTE_FIELD), &[Expr::Num(1), Expr::Num(2), Expr::Num(3)]);
+        assert_eq!(
+            f(&e, MINUTE_FIELD),
+            &[Expr::Num(1), Expr::Num(2), Expr::Num(3)]
+        );
     }
 
     #[test]
@@ -851,15 +1026,21 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
         let e2 = expand("h h * * *", Some(b"myid"), false, None, None).unwrap();
-        assert_eq!(e, e2, "hash expansion must be deterministic for the same hash_id");
+        assert_eq!(
+            e, e2,
+            "hash expansion must be deterministic for the same hash_id"
+        );
     }
 
     #[test]
     fn hash_with_range_and_divisor() {
         let e = expand("h(0-29)/10 * * * *", Some(b"x"), false, None, None).unwrap();
-        match f(&e, MINUTE_FIELD) {
-            vals => assert!(vals.iter().all(|v| matches!(v, Expr::Num(n) if (0..30).contains(n)) || matches!(v, Expr::Star))),
-        }
+        let vals = f(&e, MINUTE_FIELD);
+        assert!(
+            vals.iter().all(
+                |v| matches!(v, Expr::Num(n) if (0..30).contains(n)) || matches!(v, Expr::Star)
+            )
+        );
     }
 
     #[test]
@@ -874,7 +1055,10 @@ mod tests {
     #[test]
     fn out_of_range_rejected() {
         let err = expand("60 * * * *", None, false, None, None).unwrap_err();
-        assert_eq!(err, CroniterError::BadCron("[60 * * * *] is not acceptable, out of range".to_string()));
+        assert_eq!(
+            err,
+            CroniterError::BadCron("[60 * * * *] is not acceptable, out of range".to_string())
+        );
     }
 
     #[test]
@@ -882,7 +1066,10 @@ mod tests {
         let err = expand("* * * *", None, false, None, None).unwrap_err();
         assert_eq!(
             err,
-            CroniterError::BadCron("Exactly 5, 6 or 7 columns has to be specified for iterator expression.".to_string())
+            CroniterError::BadCron(
+                "Exactly 5, 6 or 7 columns has to be specified for iterator expression."
+                    .to_string()
+            )
         );
     }
 
@@ -891,26 +1078,39 @@ mod tests {
         let err = expand("-5 * * * *", None, false, None, None).unwrap_err();
         assert_eq!(
             err,
-            CroniterError::BadCron("[-5 * * * *] is not acceptable, negative numbers not allowed".to_string())
+            CroniterError::BadCron(
+                "[-5 * * * *] is not acceptable, negative numbers not allowed".to_string()
+            )
         );
     }
 
     #[test]
     fn err_bad_alpha() {
         let err = expand("0 0 1 FOO *", None, false, None, None).unwrap_err();
-        assert_eq!(err, CroniterError::NotAlpha("[0 0 1 foo *] is not acceptable".to_string()));
+        assert_eq!(
+            err,
+            CroniterError::NotAlpha("[0 0 1 foo *] is not acceptable".to_string())
+        );
     }
 
     #[test]
     fn err_zero_step() {
         let err = expand("*/0 * * * *", None, false, None, None).unwrap_err();
-        assert_eq!(err, CroniterError::BadCron("[*/0 * * * *] step '0' in field 0 is not acceptable".to_string()));
+        assert_eq!(
+            err,
+            CroniterError::BadCron(
+                "[*/0 * * * *] step '0' in field 0 is not acceptable".to_string()
+            )
+        );
     }
 
     #[test]
     fn err_hash_without_hash_id() {
         let err = expand("h * * * *", None, false, None, None).unwrap_err();
-        assert_eq!(err, CroniterError::BadCron("Hashed definitions must include hash_id".to_string()));
+        assert_eq!(
+            err,
+            CroniterError::BadCron("Hashed definitions must include hash_id".to_string())
+        );
     }
 
     #[test]
@@ -919,7 +1119,8 @@ mod tests {
         assert_eq!(
             err,
             CroniterError::BadCron(
-                "[0 0 ?,1 * *] is not acceptable. Question mark can not used with other characters".to_string()
+                "[0 0 ?,1 * *] is not acceptable. Question mark can not used with other characters"
+                    .to_string()
             )
         );
     }
@@ -933,6 +1134,9 @@ mod tests {
     #[test]
     fn out_of_bands_message_has_no_brackets() {
         let err = expand("100-200 * * * *", None, false, None, None).unwrap_err();
-        assert_eq!(err, CroniterError::BadCron("100-200 * * * * is out of bands".to_string()));
+        assert_eq!(
+            err,
+            CroniterError::BadCron("100-200 * * * * is out of bands".to_string())
+        );
     }
 }

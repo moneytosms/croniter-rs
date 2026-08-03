@@ -27,7 +27,10 @@ pub fn add_tzinfo(naive: NaiveDateTime, previous: DateTime<Tz>, is_prev: bool) -
 
     match tz.from_local_datetime(&naive) {
         // Unambiguous.
-        chrono::LocalResult::Single(aware) => Localized { aware, exists: true },
+        chrono::LocalResult::Single(aware) => Localized {
+            aware,
+            exists: true,
+        },
 
         // Spring-forward gap: the time does not exist. Python steps forward a minute at a
         // time until it does (croniter.py:220-222). Same loop here, bounded because a DST
@@ -37,15 +40,24 @@ pub fn add_tzinfo(naive: NaiveDateTime, previous: DateTime<Tz>, is_prev: bool) -
             for _ in 0..(24 * 60) {
                 probe += Duration::minutes(1);
                 if let chrono::LocalResult::Single(aware) = tz.from_local_datetime(&probe) {
-                    return Localized { aware, exists: false };
+                    return Localized {
+                        aware,
+                        exists: false,
+                    };
                 }
                 if let chrono::LocalResult::Ambiguous(earliest, _) = tz.from_local_datetime(&probe)
                 {
-                    return Localized { aware: earliest, exists: false };
+                    return Localized {
+                        aware: earliest,
+                        exists: false,
+                    };
                 }
             }
             // Unreachable for any real tz database entry; fall back to UTC-equivalent.
-            Localized { aware: tz.from_utc_datetime(&naive), exists: false }
+            Localized {
+                aware: tz.from_utc_datetime(&naive),
+                exists: false,
+            }
         }
 
         // Fall-back overlap: the time happens twice. Python picks whichever of the two is
@@ -64,7 +76,10 @@ pub fn add_tzinfo(naive: NaiveDateTime, previous: DateTime<Tz>, is_prev: bool) -
             } else {
                 farther
             };
-            Localized { aware, exists: true }
+            Localized {
+                aware,
+                exists: true,
+            }
         }
     }
 }
@@ -100,7 +115,9 @@ mod tests {
 
     #[test]
     fn ordinary_time_is_unambiguous_and_exists() {
-        let prev = New_York.from_local_datetime(&naive(2026, 6, 1, 12, 0)).unwrap();
+        let prev = New_York
+            .from_local_datetime(&naive(2026, 6, 1, 12, 0))
+            .unwrap();
         let got = add_tzinfo(naive(2026, 6, 1, 13, 0), prev, false);
         assert!(got.exists);
         assert_eq!(got.aware.naive_local(), naive(2026, 6, 1, 13, 0));
@@ -109,7 +126,9 @@ mod tests {
     #[test]
     fn spring_forward_gap_does_not_exist_and_is_nudged_forward() {
         // 2026-03-08 02:30 America/New_York never happens: 02:00 jumps to 03:00.
-        let prev = New_York.from_local_datetime(&naive(2026, 3, 8, 1, 0)).unwrap();
+        let prev = New_York
+            .from_local_datetime(&naive(2026, 3, 8, 1, 0))
+            .unwrap();
         let got = add_tzinfo(naive(2026, 3, 8, 2, 30), prev, false);
         assert!(!got.exists, "02:30 on a spring-forward day must not exist");
         assert_eq!(got.aware.naive_local(), naive(2026, 3, 8, 3, 0));
@@ -118,7 +137,9 @@ mod tests {
     #[test]
     fn fall_back_overlap_picks_closer_instant_when_moving_forward() {
         // 2026-11-01 01:30 America/New_York happens twice.
-        let prev = New_York.from_local_datetime(&naive(2026, 11, 1, 0, 30)).unwrap();
+        let prev = New_York
+            .from_local_datetime(&naive(2026, 11, 1, 0, 30))
+            .unwrap();
         let got = add_tzinfo(naive(2026, 11, 1, 1, 30), prev, false);
         assert!(got.exists);
         // Moving forward from 00:30 EDT, the first (EDT) occurrence is the closer successor.
@@ -138,22 +159,34 @@ mod tests {
 
     #[test]
     fn timezone_delta_is_zero_without_a_transition() {
-        let a = New_York.from_local_datetime(&naive(2026, 6, 1, 1, 0)).unwrap();
-        let b = New_York.from_local_datetime(&naive(2026, 6, 1, 2, 0)).unwrap();
+        let a = New_York
+            .from_local_datetime(&naive(2026, 6, 1, 1, 0))
+            .unwrap();
+        let b = New_York
+            .from_local_datetime(&naive(2026, 6, 1, 2, 0))
+            .unwrap();
         assert_eq!(timezone_delta(a, b), Duration::zero());
     }
 
     #[test]
     fn timezone_delta_is_an_hour_across_spring_forward() {
-        let a = New_York.from_local_datetime(&naive(2026, 3, 8, 1, 0)).unwrap();
-        let b = New_York.from_local_datetime(&naive(2026, 3, 8, 4, 0)).unwrap();
+        let a = New_York
+            .from_local_datetime(&naive(2026, 3, 8, 1, 0))
+            .unwrap();
+        let b = New_York
+            .from_local_datetime(&naive(2026, 3, 8, 4, 0))
+            .unwrap();
         assert_eq!(timezone_delta(a, b), Duration::hours(1));
     }
 
     #[test]
     fn is_successor_respects_direction() {
-        let a = New_York.from_local_datetime(&naive(2026, 6, 1, 1, 0)).unwrap();
-        let b = New_York.from_local_datetime(&naive(2026, 6, 1, 2, 0)).unwrap();
+        let a = New_York
+            .from_local_datetime(&naive(2026, 6, 1, 1, 0))
+            .unwrap();
+        let b = New_York
+            .from_local_datetime(&naive(2026, 6, 1, 2, 0))
+            .unwrap();
         assert!(is_successor(b, a, false));
         assert!(!is_successor(a, a, false));
         assert!(is_successor(a, b, true));

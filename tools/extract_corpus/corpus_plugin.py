@@ -34,6 +34,16 @@ def describe_tz(tzinfo):
         return {"tz": tzinfo.key}
     if tzinfo == datetime.timezone.utc:
         return {"tz": "UTC"}
+    # dateutil.tz.tzfile (what dateutil.tz.gettz returns) exposes neither `.zone`
+    # nor `.key`, and its utcoffset(None) is None because the offset depends on the
+    # date. Without this branch a real DST zone is recorded as an offset-less
+    # "fixed_offset", which a replay cannot reconstruct -- and these are exactly the
+    # DST tests, where the zone is the entire point.
+    filename = getattr(tzinfo, "_filename", None)
+    if filename:
+        name = filename.split("zoneinfo/")[-1] if "zoneinfo/" in filename else filename
+        if name and name != "localtime":
+            return {"tz": name}
     try:
         offset = tzinfo.utcoffset(None)
         offset_seconds = int(offset.total_seconds()) if offset is not None else None
@@ -134,12 +144,42 @@ def pytest_configure(config):
     def ctor_start_of(self):
         return getattr(self, "_corpus_ctor_start", None)
 
-    def wrapped_init(self, expr_format, start_time=None, ret_type=float, **kwargs):
-        ctor_start_iso = iso_or_none(start_time)
+    def ctor_kwargs_from(kwargs):
+        """The subset of constructor kwargs that changes behaviour, JSON-safe."""
         args = {k: v for k, v in kwargs.items() if k in CTOR_EXTRA_KEYS}
         # hash_id may be bytes; keep JSON-safe
         if "hash_id" in args and isinstance(args["hash_id"], bytes):
             args["hash_id"] = args["hash_id"].decode("utf-8", "replace")
+        return args
+
+    def base_args(self):
+        """Args for any op recorded against an existing instance.
+
+        The constructor kwargs belong on *every* record, not just the `validate`
+        one the constructor emits: a `get_next` on a croniter built with
+        `day_or=False` or `expand_from_start_time=True` is a different call from
+        the same `get_next` on a default instance, and a replay that only sees
+        `ctor_start` cannot tell them apart. Dropping them here silently
+        reinterprets those records as defaults.
+        """
+        args = dict(getattr(self, "_corpus_ctor_kwargs", None) or {})
+        args["ctor_start"] = ctor_start_of(self)
+        # `_max_years_between_matches` is a plain attribute, and at least one test
+        # (test_explicit_year_forward) reaches in and reassigns it after construction to
+        # get a bounded search that still *raises* rather than stopping silently. The
+        # constructor kwargs alone cannot show that, so record the live value whenever it
+        # has drifted from what the kwargs imply.
+        live = getattr(self, "_max_years_between_matches", None)
+        if live is not None:
+            implied = args.get("max_years_between_matches")
+            implied = max(int(implied), 1) if implied is not None else 50
+            if int(live) != implied:
+                args["state_max_years_between_matches"] = int(live)
+        return args
+
+    def wrapped_init(self, expr_format, start_time=None, ret_type=float, **kwargs):
+        ctor_start_iso = iso_or_none(start_time)
+        args = ctor_kwargs_from(kwargs)
         args["ctor_start"] = ctor_start_iso
         ret_str = "datetime" if isinstance(ret_type, type) and issubclass(ret_type, datetime.datetime) else "float"
         depth[0] += 1  # __init__'s internal set_current() call isn't a real "current" op
@@ -156,7 +196,12 @@ def pytest_configure(config):
 
     def _call_and_record(op, self, orig_fn, ret_type_kw, start_time_kw, *a, **kw):
         expr = getattr(self, "_corpus_expr", None)
-        args = {"ctor_start": ctor_start_of(self)}
+        args = base_args(self)
+        # `start` alone cannot say whether the caller *passed* a start_time or whether
+        # the recorder simply read the cursor -- and the two differ: get_next(start_time=)
+        # is refused outright when expand_from_start_time is set.
+        if start_time_kw is not None:
+            args["explicit_start_time"] = True
         s_start, tzf = effective_position(self, start_time_kw)
         effective_ret_type = ret_type_kw or getattr(self, "_ret_type", float)
         ret_str = (
@@ -189,7 +234,7 @@ def pytest_configure(config):
 
     def wrapped_get_current(self, ret_type=None):
         expr = getattr(self, "_corpus_expr", None)
-        args = {"ctor_start": ctor_start_of(self)}
+        args = base_args(self)
         s_start, tzf = effective_position(self, None)
         depth[0] += 1
         try:
@@ -206,7 +251,8 @@ def pytest_configure(config):
         if depth[0] > 0:  # nested/internal call (e.g. from _get_next), not a real test-driven op
             return orig_set_current(self, start_time, force=force)
         expr = getattr(self, "_corpus_expr", None)
-        args = {"ctor_start": ctor_start_of(self), "force": force}
+        args = base_args(self)
+        args["force"] = force
         s_start, tzf = effective_position(self, start_time)
         depth[0] += 1
         try:
@@ -222,7 +268,12 @@ def pytest_configure(config):
     def _wrap_all(op, orig_fn):
         def wrapped(self, ret_type=None, start_time=None, update_current=None):
             expr = getattr(self, "_corpus_expr", None)
-            args = {"ctor_start": ctor_start_of(self)}
+            args = base_args(self)
+            # update_current=False makes every yield restart from the same cursor, so
+            # the generator repeats one value rather than walking. Without recording it
+            # a replay that walks looks wrong against a corpus that stands still.
+            if update_current is not None:
+                args["update_current"] = update_current
             s_start, tzf = effective_position(self, start_time)
             gen = orig_fn(self, ret_type=ret_type, start_time=start_time, update_current=update_current)
             values = []
@@ -292,8 +343,9 @@ def pytest_configure(config):
             rec["expect"] = {"ok": False, "error": type(exc).__name__, "message": str(exc)}
             raise
 
-    # store expr_format / raw constructor start_time on instances so later
-    # ops on the same object can report `expr` and `args.ctor_start`
+    # store expr_format / raw constructor start_time / behaviour-changing kwargs
+    # on instances so later ops on the same object can report `expr` and the
+    # full `args` the instance was built with
     def init_and_stash(self, expr_format, *a, **kw):
         start_time = a[0] if a else kw.get("start_time")
         try:
@@ -301,6 +353,7 @@ def pytest_configure(config):
         finally:
             self._corpus_expr = expr_format
             self._corpus_ctor_start = iso_or_none(start_time)
+            self._corpus_ctor_kwargs = ctor_kwargs_from(kw)
 
     Croniter.__init__ = init_and_stash
     Croniter.get_next = wrapped_get_next

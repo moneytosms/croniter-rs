@@ -32,7 +32,16 @@ pub enum CroniterError {
     #[error("{0}")]
     BadTypeRange(String),
 
-    /// Bare `CroniterError`, plus the `ValueError`/`TypeError` cases croniter raises directly.
+    /// A bare `ValueError`. croniter raises this directly for argument misuse rather
+    /// than through its own hierarchy — passing `start_time` to `get_next` while
+    /// `expand_from_start_time` is set is the one case (croniter.py:347-350). Kept
+    /// distinct from [`Self::Other`] because the class name is part of the contract:
+    /// callers catch `ValueError`, and `CroniterError` is a *subclass* of it, so
+    /// reporting the wrong one inverts the relationship.
+    #[error("{0}")]
+    Value(String),
+
+    /// Bare `CroniterError`, plus the `TypeError` cases croniter raises directly.
     #[error("{0}")]
     Other(String),
 }
@@ -46,6 +55,7 @@ impl CroniterError {
             Self::NotAlpha(_) => "CroniterNotAlphaError",
             Self::BadDate(_) => "CroniterBadDateError",
             Self::BadTypeRange(_) => "CroniterBadTypeRangeError",
+            Self::Value(_) => "ValueError",
             Self::Other(_) => "CroniterError",
         }
     }
@@ -60,10 +70,11 @@ impl CroniterError {
 
     /// True where Python's `isinstance(exc, CroniterError)` is true.
     ///
-    /// Note `BadTypeRange` is excluded: in Python it descends from `TypeError`,
-    /// not from `CroniterError`.
+    /// `BadTypeRange` is excluded because in Python it descends from `TypeError`, and
+    /// `Value` because a bare `ValueError` is the *parent* of `CroniterError`, not an
+    /// instance of it.
     pub fn is_croniter_error(&self) -> bool {
-        !matches!(self, Self::BadTypeRange(_))
+        !matches!(self, Self::BadTypeRange(_) | Self::Value(_))
     }
 }
 
