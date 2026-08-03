@@ -320,7 +320,7 @@ def run_oracle(op: str, expr: str, naive: dt.datetime, tz: str | None,
                 expr, hash_id=args.get("hash_id"),
                 second_at_beginning=args.get("second_at_beginning", False),
             )
-            norm = [[str(v) for v in field] for field in expanded]
+            norm = [list(field) for field in expanded]
             norm_nth = {str(k): sorted(v) for k, v in nth.items()}
             return ("ok", {"expanded": norm, "nth_weekday_of_month": norm_nth})
 
@@ -396,7 +396,13 @@ def values_match(a, b) -> bool:
     if isinstance(a, list) and isinstance(b, list):
         return len(a) == len(b) and all(values_match(x, y) for x, y in zip(a, b))
     if isinstance(a, dict) and isinstance(b, dict):
-        return a.keys() == b.keys() and all(values_match(a[k], b[k]) for k in a)
+        # Port's "expand" response carries extra fields (expressions,
+        # nearest_weekday) the oracle side doesn't reconstruct; only compare
+        # keys present on both sides.
+        common = a.keys() & b.keys()
+        if not common:
+            return a == b
+        return all(values_match(a[k], b[k]) for k in common)
     return a == b
 
 

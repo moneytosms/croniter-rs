@@ -170,11 +170,25 @@ fn run_record(rec: &Record) -> Outcome {
 
     let result: Result<Value, CroniterError> = (|| {
         match rec.op.as_str() {
-            "validate" => Ok(Value::from(Croniter::is_valid(
-                &rec.expr,
-                rec.args.hash_id_bytes(),
-                rec.args.second_at_beginning,
-            ))),
+            // `validate` records come from two different Python call shapes: an actual
+            // `croniter.is_valid(...)` returning a bool, and a bare `croniter(expr)`
+            // construction whose only assertion is which exception it raises. The
+            // recorded `expect` tells them apart, so replay has to as well: comparing a
+            // raise against `is_valid`'s `false` would mark a correct port as wrong.
+            "validate" => {
+                let parsed = croniter::expand::expand(
+                    &rec.expr,
+                    rec.args.hash_id_bytes(),
+                    rec.args.second_at_beginning,
+                    None,
+                    None,
+                );
+                if rec.expect.ok {
+                    Ok(Value::from(parsed.is_ok()))
+                } else {
+                    parsed.map(|_| Value::from(true))
+                }
+            }
             "current" => {
                 let cron = build(rec)?;
                 Ok(render(cron.get_current(ret)))

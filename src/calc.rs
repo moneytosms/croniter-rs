@@ -54,7 +54,11 @@ pub fn calc_next(
     // remove them. We capture the W-day candidates from the *unblanked* DAY_FIELD once,
     // up front, and thread them through both the t1 and t2 sub-calculations exactly like
     // croniter's separately-stored `self.nearest_weekday` set persists across the blanking.
-    let w_days: Vec<i64> = exp.fields[DAY_FIELD].iter().filter_map(|e| e.as_num()).collect();
+    let w_days: Vec<i64> = if exp.nearest_weekday {
+        exp.fields[DAY_FIELD].iter().filter_map(|e| e.as_num()).collect()
+    } else {
+        Vec::new()
+    };
 
     let day_not_star = !is_all(&fields[DAY_FIELD]);
     let dow_not_star = !is_all(&fields[DOW_FIELD]);
@@ -99,7 +103,6 @@ pub fn calc_next(
 
         let mut fields_t2 = fields.clone();
         fields_t2[DAY_FIELD] = vec![Expr::Star];
-        eprintln!("DEBUG fields_t2={:?} DAY_FIELD_idx={}", fields_t2, DAY_FIELD);
         let mut nth_t2 = nth.clone();
         let t2 = match calc(
             current,
@@ -118,7 +121,6 @@ pub fn calc_next(
             }
         };
 
-        eprintln!("DEBUG t1={:?} t2={:?} clean_split={}", t1, t2, clean_split);
         return match (t1, t2) {
             (None, None) => Err(CroniterError::BadDate(bad_date_msg(is_prev))),
             (None, Some(t2)) => Ok(t2),
@@ -921,5 +923,28 @@ mod debug_probe {
 
         let full = calc_next(cur, &exp, &o, false);
         eprintln!("full = {:?}", full);
+    }
+}
+
+#[cfg(test)]
+mod debug_probe2 {
+    use super::*;
+    use crate::expr::Expr::{Num, Star};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn probe_dom_list() {
+        let exprs = vec!["03".into(),"03".into(),"16,30".into(),"*".into(),"*".into()];
+        // fields order: minute,hour,day,month,dow
+        let exp = Expanded {
+            fields: vec![vec![Num(0)], vec![Num(3)], vec![Num(16), Num(30)], vec![Star], vec![Star]],
+            nth_weekday_of_month: BTreeMap::new(),
+            expressions: exprs,
+            nearest_weekday: false,
+        };
+        let o = CalcOptions { day_or: true, implement_cron_bug: false, max_years_between_matches: 50 };
+        let cur = NaiveDate::from_ymd_opt(2013,3,1).unwrap().and_hms_opt(12,17,34).unwrap();
+        let next = calc_next(cur, &exp, &o, false);
+        eprintln!("next = {:?}", next);
     }
 }
