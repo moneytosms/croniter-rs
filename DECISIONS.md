@@ -262,7 +262,7 @@ collected — and asserting it returns promptly.
 
 ## 18. Property tests, because agreeing with Python is not the same as being correct
 
-The corpus proves the port matches Python on 15,824 recorded calls, and the fuzzer
+The corpus proves the port matches Python on 15,827 recorded calls, and the fuzzer
 compares the two on random ones. Neither says anything about a bug both implementations
 share, and neither covers inputs Python was never asked about.
 

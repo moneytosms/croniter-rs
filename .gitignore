@@ -2,5 +2,6 @@ target/
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 # pinned upstream checkout fetched by tools/extract_corpus/run.sh
 tools/extract_corpus/.source/
