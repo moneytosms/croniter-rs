@@ -307,10 +307,26 @@ class croniter:
         self.set_current(start_time, force=True)
         self._is_prev = is_prev
         self._expanded_cache: Optional[list] = None
+        self._handle: Optional[int] = None
 
-        # Eagerly validate against the Rust engine, mirroring the original's
-        # eager `_expand()` call inside __init__ (bad cron -> raises here).
-        self._request("validate", ret="datetime")
+        # Parse once, on the engine side, and keep the handle. This mirrors the
+        # original's eager `_expand()` in __init__ (a bad cron raises here), and it is
+        # what makes `R` expressions behave: croniter draws their random values during
+        # __init__ and reuses them for the object's lifetime, so the engine has to hold
+        # that one parse rather than redo it per call.
+        self._handle = self._request("create", ret="datetime")
+
+    def __del__(self):
+        # Best effort: let the engine drop the parse when this object goes away. A
+        # failure here is never interesting -- interpreter teardown may already have
+        # closed the pipe -- and must not surface from a destructor.
+        handle = getattr(self, "_handle", None)
+        if handle is None:
+            return
+        try:
+            _bridge.call(op="destroy", expr=self.expr_format, handle=handle)
+        except Exception:  # noqa: BLE001
+            pass
 
     @property
     def expanded(self) -> list:
@@ -318,16 +334,12 @@ class croniter:
         instance's cron expression (list of lists of int | '*' | 'l'), via
         the `expand` wire op. Mirrors croniter-python's `.expanded` attribute."""
         if self._expanded_cache is None:
-            # With expand_from_start_time the expansion is anchored to this instance's
-            # start rather than to zero, so the anchor has to travel with the request --
-            # otherwise `*/15` expands to [0, 15, 30, 45] instead of [8, 23, 38, 53].
-            self._expanded_cache, _ = croniter.expand(
-                self.expr_format,
-                hash_id=self._hash_id,
-                second_at_beginning=self.second_at_beginning,
-                from_timestamp=self.start_time if self._expand_from_start_time else None,
-                from_timestamp_tz=self.tzinfo if self._expand_from_start_time else None,
-            )
+            # Goes through _request so the handle travels with it: this must report the
+            # parse this instance is actually scheduling from, which for an `R`
+            # expression is the draw made in __init__ and for expand_from_start_time is
+            # the one anchored to this instance's start.
+            value = self._request("expand", ret="datetime")
+            self._expanded_cache = [list(field) for field in value["expanded"]]
         return self._expanded_cache
 
     # -- wire protocol helpers ------------------------------------------------
@@ -354,6 +366,8 @@ class croniter:
             tz=_tz_name(self.tzinfo),
             ret=ret,
             args=self._args(),
+            # None on the `create` call that mints it; set for everything after.
+            handle=getattr(self, "_handle", None),
         )
 
     # -- public API, mirroring croniter-python ---------------------------------

@@ -437,7 +437,17 @@ fn calc(
                     candidates.push(candidate);
                 }
             }
-            if candidates.is_empty() {
+            // Walking backwards wants the latest candidate, forwards the earliest.
+            // Taking it fallibly folds the "no candidate this month" case into the same
+            // binding, so the invariant is in the type rather than in a preceding guard
+            // that a later edit could drift away from.
+            candidates.sort_unstable();
+            let target = if is_prev {
+                candidates.last().copied()
+            } else {
+                candidates.first().copied()
+            };
+            let Some(target) = target else {
                 unaware_time = if is_prev {
                     add_days(set_time(unaware_time, 23, 59, 59), -d_day)?
                 } else {
@@ -446,12 +456,6 @@ fn calc(
                 };
                 year = unaware_time.year() as i64;
                 continue;
-            }
-            candidates.sort_unstable();
-            let target = if is_prev {
-                *candidates.last().unwrap()
-            } else {
-                candidates[0]
             };
             let diff_day = target - d_day;
             if diff_day != 0 {
@@ -522,7 +526,17 @@ fn calc(
                     }
                 }
             }
-            if candidates.is_empty() {
+            // Walking backwards wants the latest candidate, forwards the earliest.
+            // Taking it fallibly folds the "no candidate this month" case into the same
+            // binding, so the invariant is in the type rather than in a preceding guard
+            // that a later edit could drift away from.
+            candidates.sort_unstable();
+            let target = if is_prev {
+                candidates.last().copied()
+            } else {
+                candidates.first().copied()
+            };
+            let Some(target) = target else {
                 unaware_time = if is_prev {
                     add_days(set_time(unaware_time, 23, 59, 59), -d_day)?
                 } else {
@@ -531,12 +545,6 @@ fn calc(
                 };
                 year = unaware_time.year() as i64;
                 continue;
-            }
-            candidates.sort_unstable();
-            let target = if is_prev {
-                *candidates.last().unwrap()
-            } else {
-                candidates[0]
             };
             let diff_day = target - d_day;
             if diff_day != 0 {

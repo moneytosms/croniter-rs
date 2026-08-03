@@ -8,11 +8,13 @@
 //! is the inverse: Python spawns the port as an ordinary subprocess. The crate contains
 //! no Python, and `cargo test` passes with no Python installed.
 
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 
 use chrono::{DateTime, NaiveDateTime};
 use chrono_tz::Tz;
-use croniter::{Croniter, CroniterError, Occurrence, Options, RetType, croniter_range};
+use croniter::{Croniter, CroniterError, Expanded, Occurrence, Options, RetType, croniter_range};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -33,6 +35,15 @@ struct Request {
     stop: Option<String>,
     #[serde(default)]
     args: Args,
+    /// Identifies a parse held on this side for the lifetime of one Python `croniter`.
+    ///
+    /// Every other field of a request is a pure function of its inputs, so rebuilding
+    /// from `expr` each time is equivalent — except for `R` (random) expressions, whose
+    /// expansion croniter draws once in `__init__` and then reuses. Re-expanding those
+    /// per call makes consecutive `get_next()`s wander instead of advancing. The shim
+    /// creates a handle in its constructor and quotes it thereafter.
+    #[serde(default)]
+    handle: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -227,6 +238,30 @@ fn resolve_tz(name: &str) -> Result<Tz, CroniterError> {
         .map_err(|_| CroniterError::Other(format!("unknown timezone {name:?}")))
 }
 
+// Parses held on behalf of live Python `croniter` objects, keyed by handle.
+//
+// Single-threaded: the protocol is one request per line on stdin, answered before the
+// next is read, so a plain `RefCell` in thread-local storage is enough and avoids a
+// mutex that would never be contended.
+thread_local! {
+    static PARSES: RefCell<HashMap<u64, Expanded>> = RefCell::new(HashMap::new());
+    static NEXT_HANDLE: Cell<u64> = const { Cell::new(1) };
+}
+
+fn store_parse(expanded: Expanded) -> u64 {
+    let handle = NEXT_HANDLE.with(|h| {
+        let v = h.get();
+        h.set(v + 1);
+        v
+    });
+    PARSES.with(|p| p.borrow_mut().insert(handle, expanded));
+    handle
+}
+
+fn take_parse(handle: u64) -> Option<Expanded> {
+    PARSES.with(|p| p.borrow().get(&handle).cloned())
+}
+
 fn build_options(req: &Request) -> Result<Options, CroniterError> {
     Ok(Options {
         ret_type: match req.ret.as_deref() {
@@ -243,18 +278,28 @@ fn build_options(req: &Request) -> Result<Options, CroniterError> {
     })
 }
 
+/// Resolve a request's start into the (naive, aware) pair the constructors take.
+fn start_pair(
+    req: &Request,
+) -> Result<(Option<NaiveDateTime>, Option<DateTime<Tz>>), CroniterError> {
+    match (&req.tz, req.start.as_deref()) {
+        (Some(tz_name), Some(start)) => Ok((None, Some(parse_aware(start, resolve_tz(tz_name)?)?))),
+        (_, start) => Ok((start.map(parse_naive).transpose()?, None)),
+    }
+}
+
 fn make_cron(req: &Request) -> Result<Croniter, CroniterError> {
     let opts = build_options(req)?;
-    match (&req.tz, req.start.as_deref()) {
-        (Some(tz_name), Some(start)) => {
-            let aware = parse_aware(start, resolve_tz(tz_name)?)?;
-            Croniter::with_options(&req.expr, None, Some(aware), opts)
-        }
-        (_, start) => {
-            let naive = start.map(parse_naive).transpose()?;
-            Croniter::with_options(&req.expr, naive, None, opts)
-        }
+    let (naive, aware) = start_pair(req)?;
+
+    // A handle means the Python object this call belongs to already parsed its
+    // expression, so reuse that parse rather than making a new one. For everything but
+    // `R` the two are identical; for `R` only the stored one carries the draw croniter
+    // committed to in `__init__`.
+    if let Some(expanded) = req.handle.and_then(take_parse) {
+        return Ok(Croniter::from_expanded(expanded, naive, aware, opts));
     }
+    Croniter::with_options(&req.expr, naive, aware, opts)
 }
 
 fn encode(occ: Occurrence) -> Value {
@@ -285,6 +330,47 @@ fn handle(req: Request) -> Result<Value, CroniterError> {
             )?;
             if req.args.strict {
                 croniter::expand::check_strict(&expanded, &req.expr, &req.args.strict_year)?;
+            }
+            Ok(json!(true))
+        }
+
+        // Like `validate`, but keeps the resulting parse and names it. The shim's
+        // `__init__` uses this so that one Python `croniter` maps to one parse here,
+        // which is what croniter's own semantics require for `R` expressions.
+        "create" => {
+            let (naive, aware) = start_pair(&req)?;
+            let start_ts = match (naive, aware) {
+                (_, Some(a)) => Some(croniter::datetime_to_timestamp(a)),
+                (Some(n), None) => Some(croniter::naive_to_timestamp(n)),
+                (None, None) => None,
+            };
+            let anchor = req
+                .args
+                .expand_from_start_time
+                .then_some(start_ts)
+                .flatten();
+            let tz = match (&req.tz, req.args.expand_from_start_time) {
+                (Some(name), true) => Some(resolve_tz(name)?),
+                _ => None,
+            };
+            let expanded = croniter::expand::expand(
+                &req.expr,
+                req.args.hash_id()?.as_deref(),
+                req.args.second_at_beginning,
+                anchor,
+                tz,
+            )?;
+            if req.args.strict {
+                croniter::expand::check_strict(&expanded, &req.expr, &req.args.strict_year)?;
+            }
+            Ok(json!(store_parse(expanded)))
+        }
+
+        // Python-side object went away; drop the parse so a long session does not grow
+        // a handle map forever.
+        "destroy" => {
+            if let Some(h) = req.handle {
+                PARSES.with(|p| p.borrow_mut().remove(&h));
             }
             Ok(json!(true))
         }
@@ -383,19 +469,27 @@ fn handle(req: Request) -> Result<Value, CroniterError> {
         // directly (`.expanded` 68 times, `croniter.expand` 37, `HashExpander` 13), so
         // the bridge needs a way to hand it back in croniter's own shape.
         "expand" => {
-            let from_tz = req
-                .args
-                .from_timestamp_tz
-                .as_deref()
-                .map(resolve_tz)
-                .transpose()?;
-            let expanded = croniter::expand::expand(
-                &req.expr,
-                req.args.hash_id()?.as_deref(),
-                req.args.second_at_beginning,
-                req.args.from_timestamp,
-                from_tz,
-            )?;
+            // Reading `.expanded` off an instance must show that instance's own parse.
+            // Re-expanding an `R` expression here would report a different draw from the
+            // one its `get_next` is using — the object would disagree with itself.
+            let expanded = match req.handle.and_then(take_parse) {
+                Some(expanded) => expanded,
+                None => {
+                    let from_tz = req
+                        .args
+                        .from_timestamp_tz
+                        .as_deref()
+                        .map(resolve_tz)
+                        .transpose()?;
+                    croniter::expand::expand(
+                        &req.expr,
+                        req.args.hash_id()?.as_deref(),
+                        req.args.second_at_beginning,
+                        req.args.from_timestamp,
+                        from_tz,
+                    )?
+                }
+            };
             if req.args.strict {
                 croniter::expand::check_strict(&expanded, &req.expr, &req.args.strict_year)?;
             }

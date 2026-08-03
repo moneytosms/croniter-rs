@@ -150,9 +150,8 @@ impl Croniter {
         aware_start: Option<DateTime<Tz>>,
         opts: Options,
     ) -> Result<Self> {
-        let max_years_explicitly_set = opts.max_years_between_matches.is_some();
-        let max_years_between_matches = opts.max_years_between_matches.unwrap_or(50).max(1);
-
+        // Only needed to anchor a start-time-relative expansion; `from_expanded` derives
+        // the rest of the state from the same start.
         let (tz, start_ts) = match (naive_start, aware_start) {
             (_, Some(aware)) => (Some(aware.timezone()), datetime_to_timestamp(aware)),
             (Some(naive), None) => (None, naive_to_timestamp(naive)),
@@ -181,7 +180,44 @@ impl Croniter {
             },
         )?;
 
-        Ok(Self {
+        Ok(Self::from_expanded(
+            expanded,
+            naive_start,
+            aware_start,
+            opts,
+        ))
+    }
+
+    /// Build a scheduler from an expression that has already been parsed.
+    ///
+    /// Two reasons this is public. Parsing is the expensive half of a single `get_next`
+    /// (see `bench/results.json`), so a caller scheduling many start times against one
+    /// expression should pay for it once. And an [`Expanded`] produced from a random
+    /// (`R`) expression holds *the draw that was made* — reusing it is the only way to
+    /// get croniter's semantics, where the random values are fixed for the lifetime of
+    /// the object rather than redrawn on every call.
+    pub fn from_expanded(
+        expanded: Expanded,
+        naive_start: Option<NaiveDateTime>,
+        aware_start: Option<DateTime<Tz>>,
+        opts: Options,
+    ) -> Self {
+        let max_years_explicitly_set = opts.max_years_between_matches.is_some();
+        let max_years_between_matches = opts.max_years_between_matches.unwrap_or(50).max(1);
+
+        let (tz, start_ts) = match (naive_start, aware_start) {
+            (_, Some(aware)) => (Some(aware.timezone()), datetime_to_timestamp(aware)),
+            (Some(naive), None) => (None, naive_to_timestamp(naive)),
+            (None, None) => {
+                let now = Utc::now();
+                (
+                    None,
+                    now.timestamp() as f64 + f64::from(now.timestamp_subsec_micros()) / 1e6,
+                )
+            }
+        };
+
+        Self {
             expanded,
             tz,
             cur: start_ts,
@@ -193,7 +229,7 @@ impl Croniter {
             max_years_between_matches,
             max_years_explicitly_set,
             is_prev: opts.is_prev,
-        })
+        }
     }
 
     /// croniter's `is_valid` classmethod (croniter.py:1363-1373).

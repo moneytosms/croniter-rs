@@ -594,18 +594,22 @@ pub fn expand(
                 if let Some(sd) = special_dow_match(&e) {
                     match sd {
                         DowSpecial::Nth { he, nth_str } => {
-                            let nth_val: Option<i64> = nth_str.parse().ok();
-                            let valid = matches!(nth_val, Some(v) if (1..=5).contains(&v));
-                            if !valid {
-                                let shown = nth_val
+                            // Parse and range-check in one step, so the accepted value is
+                            // carried by the `Some` arm instead of being re-extracted
+                            // after a separate validity flag.
+                            let parsed: Option<i64> = nth_str.parse().ok();
+                            let Some(nth_val) = parsed.filter(|v| (1..=5).contains(v)) else {
+                                // croniter reports the parsed number when the text was
+                                // numeric at all, and the raw text otherwise.
+                                let shown = parsed
                                     .map(|v| v.to_string())
                                     .unwrap_or_else(|| nth_str.clone());
                                 return Err(CroniterError::BadCron(format!(
                                     "[{expr_format}] is not acceptable. Invalid day_of_week value: '{shown}'"
                                 )));
-                            }
+                            };
                             e = he;
-                            nth = Some(NthKind::Num(nth_val.unwrap()));
+                            nth = Some(NthKind::Num(nth_val));
                         }
                         DowSpecial::Last { n_str } => {
                             e = n_str;
