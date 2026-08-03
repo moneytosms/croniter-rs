@@ -1,0 +1,12 @@
+track = "D"
+source_url = "https://github.com/pallets-eco/croniter"
+source_commit = "f64665eb635402af70b4225832b37e53d0b35727"
+source_language = "python"
+target_language = "rust"
+license = "MIT"
+
+[tests]
+original_dir = "tests/original"
+hash_manifest = "tests/original/HASHES.txt"
+kickoff_sha256 = "1178437e9fae912b5634ff405d6f66d07c27d14a15153bdd76ab5298a8c56cd2"
+modified = false
