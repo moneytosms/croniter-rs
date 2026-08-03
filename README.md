@@ -215,4 +215,6 @@ benchmark sample runner are verification tooling, not part of the published crat
 
 ## Licence
 
-MIT, inherited from the original.
+MIT, inherited from the original. [`LICENSE`](./LICENSE) is upstream's file, and the
+copyright notice in it is upstream's — retained verbatim, which is what the licence
+requires of a derivative work. This port adds no separate terms.
