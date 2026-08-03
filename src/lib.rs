@@ -218,7 +218,7 @@ impl Croniter {
     /// Two reasons this is public. Parsing is the expensive half of a single `get_next`
     /// (see `bench/results.json`), so a caller scheduling many start times against one
     /// expression should pay for it once. And an [`Expanded`] produced from a random
-    /// (`R`) expression holds *the draw that was made* — reusing it is the only way to
+    /// (`R`) expression holds *the draw that was made*, and reusing it is the only way to
     /// get croniter's semantics, where the random values are fixed for the lifetime of
     /// the object rather than redrawn on every call.
     pub fn from_expanded(
@@ -379,9 +379,9 @@ impl Croniter {
     /// from the cursor, and move the cursor there.
     ///
     /// Refuses when the expression was expanded relative to the construction start
-    /// (croniter.py:347-350). The two settings contradict each other — the parse tree is
+    /// (croniter.py:347-350). The two settings contradict each other, because the parse tree is
     /// already anchored to one instant, so honouring a different one would search a
-    /// schedule the caller never asked for — and croniter raises a bare `ValueError`
+    /// schedule the caller never asked for, and croniter raises a bare `ValueError`
     /// rather than silently picking one.
     pub fn get_next_from(
         &mut self,
@@ -731,8 +731,8 @@ pub fn croniter_range_iter(
 ///
 /// Python yields, and that matters beyond style. A range spanning a year at one-second
 /// granularity is tens of millions of fires; collecting them costs gigabytes and the
-/// caller usually wants the first few. Differential fuzzing surfaced exactly that case —
-/// a generated range took 92 seconds and materialised the lot — so this streams, and the
+/// caller usually wants the first few. Differential fuzzing surfaced exactly that case,
+/// where a generated range took 92 seconds and materialised the lot, so this streams, and the
 /// `Vec`-returning functions are thin wrappers over it for callers who do want them all.
 ///
 /// `Item` is a `Result` because a search can fail partway. Running out of matches inside

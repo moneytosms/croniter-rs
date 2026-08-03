@@ -61,7 +61,7 @@ is therefore *not* caught by `except CroniterError`.
 
 ## 4. `ret_type` becomes two types instead of a type object
 
-**Python:** `get_next(ret_type=float)` vs `get_next(ret_type=datetime.datetime)` — the
+**Python:** `get_next(ret_type=float)` vs `get_next(ret_type=datetime.datetime)`. The
 return type is selected by passing a *type object*, and the return value is dynamically
 one thing or the other.
 
@@ -109,8 +109,8 @@ setup; through the bridge that mutation is inert.
 ## 7. `relativedelta` is re-implemented, not approximated
 
 **Python:** leans on `dateutil.relativedelta`, whose semantics are non-obvious. Adding
-`relativedelta(months=1)` to 31 January yields 28 February — it clamps rather than
-overflowing — and the singular absolute forms (`month=1`) differ from the plural relative
+`relativedelta(months=1)` to 31 January yields 28 February, clamping rather than
+overflowing, and the singular absolute forms (`month=1`) differ from the plural relative
 forms (`months=1`). croniter uses both, sometimes in the same expression.
 
 **Port:** a private helper in `src/calc.rs` reproduces exactly the clamping and
@@ -152,7 +152,7 @@ have meant guessing where croniter is explicit.
 
 ## 11. An `expand` op was added to the conformance protocol
 
-**Why:** 105 assertions in the original suite read internal parser state directly —
+**Why:** 105 assertions in the original suite read internal parser state directly:
 `.expanded` 68 times and `croniter.expand` 37. A purely black-box bridge
 would fail all of them with `AttributeError`, costing pass rate that the port actually
 earns. The op returns the parse tree in croniter's own shape (ints, `"*"`, `"l"`) so the
@@ -189,7 +189,7 @@ and a `croniter_range` whose `start` is a float while its `stop` is a datetime
 
 **Port:** `RetType` is an enum, `hash_id` is `Option<Vec<u8>>`, and `croniter_range` takes
 two `NaiveDateTime`s. None of these calls can be constructed, so there is no behaviour to
-match — the type system already rules them out at the call site, which is the outcome the
+match. The type system already rules them out at the call site, which is the outcome the
 Python test is asking for.
 
 `tests/corpus_replay.rs` excludes exactly these three, keyed on the error message the
@@ -200,14 +200,14 @@ counted as a divergence.
 
 This list was four. The fourth was `get_next(start_time=...)` with
 `expand_from_start_time=True`, which croniter refuses with a bare `ValueError`
-(croniter.py:347-350) — excluded only because the port had no `start_time` parameter to
+(croniter.py:347-350), excluded only because the port had no `start_time` parameter to
 pass. That was a missing feature wearing the costume of a type-system win, so the parameter
 now exists (`get_next_from` / `get_prev_from`, taking a `StartTime`), the guard is
 implemented, and the record is verified like any other.
 
 The remaining exclusion is the 10 `R`/`R(a-b)` records, which are random by construction
 (§12) and reported separately as `random-expr (unverifiable)`. Everything else in the
-corpus — 15,827 records — is replayed and compared.
+corpus, all 15,827 records, is replayed and compared.
 
 ## 16. The conformance bridge holds one parse per Python object
 
@@ -216,7 +216,7 @@ corpus — 15,827 records — is replayed and compared.
 
 **Bridge, first cut:** the shim sent `(expr, start, args)` per call and the Rust side built
 a fresh `Croniter` for each request. Stateless and simple, and for every deterministic
-expression exactly equivalent — the expansion is a pure function of its inputs. For an `R`
+expression exactly equivalent, because the expansion is a pure function of its inputs. For an `R`
 expression it meant a new draw per call, so consecutive `get_next()`s wandered instead of
 advancing, and 1-3 of the 4 tests in `test_croniter_random.py` failed depending on the
 draw.
@@ -225,7 +225,7 @@ draw.
 once, stores the `Expanded` and returns an id; every later request quotes that handle and
 the engine reuses the stored parse. `__del__` issues `destroy`. The `expand` op honours the
 handle too, so reading `.expanded` off an instance reports the parse that instance is
-actually scheduling from — an object can no longer disagree with itself.
+actually scheduling from, so an object can no longer disagree with itself.
 
 This needed a way to build a scheduler from an already-parsed expression, so
 `Croniter::from_expanded` is public. That is useful well beyond the bridge: parsing is the
@@ -240,7 +240,7 @@ Result: **248 of 248**, thirteen consecutive runs, no flakes.
 never computed.
 
 **Port (first cut):** it collected into a `Vec` and returned that. Behaviourally identical
-for any range a test would write, and the golden corpus never noticed — every `range`
+for any range a test would write, and the golden corpus never noticed, since every `range`
 record in it is a handful of results.
 
 Differential fuzzing noticed. A generated case walked
@@ -257,8 +257,8 @@ silently, mirroring the Python's `except CroniterBadDateError: return`, while an
 failure is surfaced rather than swallowed.
 
 `tests/regressions.rs::range_iterator_does_not_materialize_the_whole_window` pins it by
-taking three fires from a decade-long per-second window — about 300 million instants if
-collected — and asserting it returns promptly.
+taking three fires from a decade-long per-second window, about 300 million instants if
+collected, and asserting it returns promptly.
 
 ## 18. Property tests, because agreeing with Python is not the same as being correct
 
@@ -268,14 +268,14 @@ share, and neither covers inputs Python was never asked about.
 
 `tests/properties.rs` asserts what a cron iterator must satisfy on its own terms:
 
-- `get_next` advances, and lands on an instant `matches()` agrees is a fire — `matches`
+- `get_next` advances, and lands on an instant `matches()` agrees is a fire. `matches`
   runs the *backwards* search, so this is not the search agreeing with itself
 - `get_prev` recedes, and likewise lands on a fire
-- `prev(next(t)) <= t` — the round-trip cannot overshoot
+- `prev(next(t)) <= t`, so the round-trip cannot overshoot
 - `get_next` skips nothing: every minute in the gap is probed directly
 - `croniter_range` equals repeated `get_next` over the same window
 - expansion is deterministic, and `is_valid` agrees with actually parsing
-- a long walk is strictly increasing — a search that stalls would hang a scheduler and is
+- a long walk is strictly increasing, because a search that stalls would hang a scheduler and is
   invisible to a one-step test
 
 Each runs against ordinary expressions and again against `L` / `W` / `#` and days 29-31,
@@ -291,7 +291,7 @@ looked exactly like a search bug and was not one.
 
 A `get_prev` for `*/13 14-15 2-13 6 1` in `Australia/Sydney`, starting in December 2100,
 disagreed with the original by exactly 3600 seconds. The *local* time both produced was
-identical — `2100-06-07 15:52:00`. Only the UTC offset differed: the port said `+11:00`,
+identical at `2100-06-07 15:52:00`. Only the UTC offset differed: the port said `+11:00`,
 the original said `+10:00`. June is Australian winter, so `+10:00` is right.
 
 **Cause.** A tzfile carries explicit transitions up to roughly 2037 plus a POSIX TZ footer
@@ -300,7 +300,7 @@ indefinitely. chrono-tz compiles a fixed transition table and, once past its fin
 holds the last offset forever. For `Australia/Sydney` the two agree through 2099 and part
 company in 2100, where chrono-tz reports permanent AEDT.
 
-**Response.** Nothing in this port is wrong, and there is nothing here to fix — the tz
+**Response.** Nothing in this port is wrong, and there is nothing here to fix. The tz
 database is a dependency, and swapping it (§10) would trade this for a different set of
 edge cases. Instead:
 

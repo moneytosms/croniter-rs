@@ -27,15 +27,15 @@ expensive paths rather than to flatter the port:
 
 ## Workloads
 
-1. **parse** — `is_valid`, i.e. expression to parse tree, no date search. Isolates the
+1. **parse**: `is_valid`, that is, expression to parse tree with no date search. Isolates the
    parser.
-2. **next_once / prev_once** — one step from a fresh instance. This is the latency number
+2. **next_once / prev_once**: one step from a fresh instance. This is the latency number
    that matters for a scheduler asking "when next".
-3. **walk_1000** — 1,000 consecutive steps from a single parse. This is the throughput
+3. **walk_1000**: 1,000 consecutive steps from a single parse. This is the throughput
    number, and it deliberately excludes parse cost so it is not flattered by it.
-4. **range_one_year** — a year of daily fires through `croniter_range`, the workload
+4. **range_one_year**: a year of daily fires through `croniter_range`, the workload
    closest to real scheduler use.
-5. **dst_transition_walk** — 24 hourly steps across the 2026-03-08 America/New_York
+5. **dst_transition_walk**: 24 hourly steps across the 2026-03-08 America/New_York
    spring-forward, exercising the `calc_with_tz` re-entrant path. The expensive case, kept
    in the set on purpose.
 
@@ -59,8 +59,8 @@ expensive paths rather than to flatter the port:
 - Throughput-only numbers are misleading here. A cron search is a loop over a small,
   bounded state space, so the port's advantage is mostly interpreter overhead rather than
   algorithmic. The p99 figures matter more than the medians, and both are reported.
-- The DST workload is in the table because it is the expensive path — `calc_with_tz`
-  re-runs the naive search when a local time does not exist — not because it flatters the
+- The DST workload is in the table because it is the expensive path, since `calc_with_tz`
+  re-runs the naive search when a local time does not exist, not because it flatters the
   port. On the current run-set it happens to score well (x117); on earlier run-sets it was
   the *lowest* of the group. That swing is itself the point: treat any single workload's
   ratio as noisy and read the range.

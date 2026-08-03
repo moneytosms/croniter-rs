@@ -472,7 +472,7 @@ fn format_nth_map(m: &std::collections::BTreeMap<i64, BTreeSet<i64>>) -> String 
 ///
 /// Rejects day/month combinations that can never occur, such as `0 0 31 2 *` (February
 /// 31st). February is treated as having 29 days unless the years in play are known and
-/// none of them is a leap year — either from `strict_year` or from an explicit year
+/// none of them is a leap year, either from `strict_year` or from an explicit year
 /// field. Kept out of [`expand`] because it is an opt-in extra check on an
 /// already-parsed expression, exactly as it is in the Python.
 pub fn check_strict(expanded: &Expanded, expr_format: &str, strict_year: &[i64]) -> Result<()> {

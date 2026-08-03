@@ -33,7 +33,7 @@ pub enum CroniterError {
     BadTypeRange(String),
 
     /// A bare `ValueError`. croniter raises this directly for argument misuse rather
-    /// than through its own hierarchy — passing `start_time` to `get_next` while
+    /// than through its own hierarchy. Passing `start_time` to `get_next` while
     /// `expand_from_start_time` is set is the one case (croniter.py:347-350). Kept
     /// distinct from [`Self::Other`] because the class name is part of the contract:
     /// callers catch `ValueError`, and `CroniterError` is a *subclass* of it, so

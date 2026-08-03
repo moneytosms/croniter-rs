@@ -4,8 +4,8 @@
 //! The golden corpus proves the port agrees with Python on 15,824 recorded calls, and the
 //! differential fuzzer compares the two on random ones. Neither says anything about
 //! inputs Python was never asked about. These do: they assert the properties a cron
-//! iterator must have on its own terms — a search that always advances, never skips a
-//! match, and round-trips — so a bug that both implementations share would still be
+//! iterator must have on its own terms: a search that always advances, never skips a
+//! match, and round-trips. A bug that both implementations share would still be
 //! caught here.
 //!
 //! Failures shrink to a minimal expression and start instant, which is the reason for
@@ -118,7 +118,7 @@ proptest! {
     /// The defining property of `get_next`: it moves forward, and it lands on a fire.
     ///
     /// "Lands on a fire" is checked with `matches`, which is a genuinely independent
-    /// path — it runs the *backwards* search and compares — so agreement is not just the
+    /// path, since it runs the *backwards* search and compares, so agreement is not just the
     /// search agreeing with itself.
     #[test]
     fn next_advances_and_lands_on_a_match(expr in unix_expr(), start in start_dt()) {

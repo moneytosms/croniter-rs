@@ -38,7 +38,7 @@ struct Request {
     /// Identifies a parse held on this side for the lifetime of one Python `croniter`.
     ///
     /// Every other field of a request is a pure function of its inputs, so rebuilding
-    /// from `expr` each time is equivalent — except for `R` (random) expressions, whose
+    /// from `expr` each time is equivalent, except for `R` (random) expressions, whose
     /// expansion croniter draws once in `__init__` and then reuses. Re-expanding those
     /// per call makes consecutive `get_next()`s wander instead of advancing. The shim
     /// creates a handle in its constructor and quotes it thereafter.
@@ -154,7 +154,7 @@ fn main() -> io::Result<()> {
 ///
 /// Splitting on `['+', 'Z']` misses negative offsets: `2018-02-17T21:00:00-02:00` has
 /// neither, so the whole string survives and then fails to parse. The offset is also
-/// worth keeping rather than discarding — inside a DST fold it is the only thing that
+/// worth keeping rather than discarding, because inside a DST fold it is the only thing that
 /// says which of the two instants the caller meant.
 fn split_offset(s: &str) -> (&str, Option<chrono::FixedOffset>) {
     if let Some(rest) = s.strip_suffix('Z') {
@@ -471,7 +471,7 @@ fn handle(req: Request) -> Result<Value, CroniterError> {
         "expand" => {
             // Reading `.expanded` off an instance must show that instance's own parse.
             // Re-expanding an `R` expression here would report a different draw from the
-            // one its `get_next` is using — the object would disagree with itself.
+            // one its `get_next` is using, or the object would disagree with itself.
             let expanded = match req.handle.and_then(take_parse) {
                 Some(expanded) => expanded,
                 None => {

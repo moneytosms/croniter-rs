@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Benchmarks the original Python croniter against this port and writes results.json.
 
-The methodology this implements — which workloads, how p99 is obtained, what the
-startup and RSS numbers do and do not mean — is written up in `bench/methodology.md`.
+The methodology this implements, meaning which workloads, how p99 is obtained, and what
+the startup and RSS numbers do and do not mean, is written up in `bench/methodology.md`.
 Read that first; this file is the mechanism, not the argument.
 
 Both sides run the same expressions from the same start instant. The Rust side is driven

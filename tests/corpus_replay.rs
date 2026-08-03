@@ -97,7 +97,7 @@ fn corpus_path() -> PathBuf {
 /// Splitting on `['+', 'Z']` is not enough: a negative offset (`...T21:00:00-02:00`) has
 /// no `+` and no `Z`, so the whole string survives the split and then fails to parse,
 /// which the caller sees as an unparseable start rather than as a timezone it mishandled.
-/// The offset also cannot simply be discarded — for a local time inside a DST fold it is
+/// The offset also cannot simply be discarded, because for a local time inside a DST fold it is
 /// the only thing that says which of the two instants Python meant.
 fn split_offset(s: &str) -> (String, Option<FixedOffset>) {
     let normalized = s.replace(' ', "T");
@@ -447,7 +447,7 @@ const SUPPORTED: [&str; 7] = [
 
 /// Python-side failures the Rust API cannot reproduce, keyed by the message the corpus
 /// recorded. Each is a call that simply does not typecheck or does not exist in this
-/// port, not a behaviour it gets wrong — see DECISIONS.md §15. Matched on the exact
+/// port, not a behaviour it gets wrong. See DECISIONS.md entry 15. Matched on the exact
 /// message so that a *different* error arising from the same call still fails loudly.
 const UNREPRESENTABLE: [&str; 3] = [
     // `ret_type` is an enum here, so there is no third value to reject.
@@ -470,8 +470,8 @@ fn is_unrepresentable(rec: &Record) -> bool {
 
 /// Does any field of `expr` use croniter's random syntax (`R`, `R(a-b)`)?
 ///
-/// Matched per-field on the whole token so that `FRI`, `MAR` and friends — which merely
-/// contain an `R` — are left alone.
+/// Matched per-field on the whole token so that `FRI`, `MAR` and friends, which merely
+/// contain an `R`, are left alone.
 fn is_random_expr(expr: &str) -> bool {
     expr.split_whitespace().any(|field| {
         field.split(',').any(|part| {
@@ -510,7 +510,7 @@ fn corpus_replays_against_the_port() {
         // `R` / `R(a-b)` expand to a *random* member of the field's range at parse time
         // (croniter.py:1587-1620). Python recorded one draw; the port makes its own. There
         // is no answer these records could be checked against, so they are excluded rather
-        // than counted as passes — see DECISIONS.md §12. Anything else with an `R` in it
+        // than counted as passes. See DECISIONS.md entry 12. Anything else with an `R` in it
         // (`FRI`, `MAR`, ...) is alphabetic and unaffected.
         if is_random_expr(&rec.expr) {
             random_skipped += 1;
