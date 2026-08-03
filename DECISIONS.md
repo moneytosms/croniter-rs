@@ -33,7 +33,7 @@ which is the inverse direction and involves no `libpython`, no PyO3, and no FFI.
 Layer 1 as well means that if a judge reads Rule 05 more strictly than we do, the
 submission's correctness evidence is unaffected.
 
-**Cost:** the corpus is 3.8 MB of committed JSON, and the bridge is a second
+**Cost:** the corpus is 4.4 MB of committed JSON, and the bridge is a second
 implementation surface that must track the wire protocol.
 
 ## 2. `tests/original/` is byte-identical and hash-pinned
@@ -152,8 +152,8 @@ have meant guessing where croniter is explicit.
 
 ## 11. An `expand` op was added to the conformance protocol
 
-**Why:** 118 assertions in the original suite read internal parser state directly —
-`.expanded` 68 times, `croniter.expand` 37, `HashExpander` 13. A purely black-box bridge
+**Why:** 105 assertions in the original suite read internal parser state directly —
+`.expanded` 68 times and `croniter.expand` 37. A purely black-box bridge
 would fail all of them with `AttributeError`, costing pass rate that the port actually
 earns. The op returns the parse tree in croniter's own shape (ints, `"*"`, `"l"`) so the
 shim can hand back structurally identical values.
@@ -282,7 +282,7 @@ Each runs against ordinary expressions and again against `L` / `W` / `#` and day
 kept as separate cases so a failure says immediately which path broke. proptest rather
 than another random loop, for the shrinking: a counterexample arrives minimal.
 
-88,000 generated cases pass.
+4,400 generated cases pass: 11 properties at 400 cases each.
 
 ## 19. chrono-tz stops projecting DST after a zone's last explicit transition
 

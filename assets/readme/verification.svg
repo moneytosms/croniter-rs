@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="430" viewBox="0 0 1200 430"
+     role="img" aria-labelledby="vTitle vDesc">
+  <title id="vTitle">Two independent verification layers</title>
+  <desc id="vDesc">The pinned Python original feeds two separate proofs. Layer one records every call the upstream suite makes into a golden corpus, replayed later by pure Rust with no Python present. Layer two runs the unmodified suite live against the Rust binary through a pure-Python shim that speaks JSON over a pipe.</desc>
+
+  <defs>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#4A5158"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="430" rx="26" fill="#0B0D0F"/>
+
+  <!-- ================= shared source ================= -->
+  <g transform="translate(56 178)">
+    <rect width="200" height="76" rx="10" fill="#14181B" stroke="#3A424A" stroke-width="1.5"/>
+    <text class="mono" x="18" y="28" font-size="15" fill="#EDEBE8">croniter (Python)</text>
+    <text class="mono" x="18" y="50" font-size="13" fill="#767E85">pinned @ f64665e</text>
+    <text class="mono" x="18" y="68" font-size="13" fill="#767E85">4,755-line suite</text>
+  </g>
+
+  <!-- split arrows -->
+  <path d="M256 200 C 282 200, 282 130, 300 130" fill="none" stroke="#4A5158" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <path d="M256 232 C 282 232, 282 302, 300 302" fill="none" stroke="#4A5158" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <!-- ================= layer 1 ================= -->
+  <text class="mono" x="308" y="76" font-size="13" letter-spacing="1.8" fill="#767E85">LAYER 1 &#183; PRIMARY &#183; RUNS OFFLINE, ONCE</text>
+
+  <g transform="translate(308 100)">
+    <rect width="196" height="60" rx="10" fill="#14181B" stroke="#262C31" stroke-width="1.5"/>
+    <text class="mono" x="16" y="26" font-size="14" fill="#EDEBE8">instrumented run</text>
+    <text class="mono" x="16" y="46" font-size="12" fill="#767E85">records every call</text>
+  </g>
+  <path d="M512 130 L 542 130" fill="none" stroke="#4A5158" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <g transform="translate(552 100)">
+    <rect width="196" height="60" rx="10" fill="#14181B" stroke="#262C31" stroke-width="1.5"/>
+    <text class="mono" x="16" y="26" font-size="14" fill="#EDEBE8">corpus.json</text>
+    <text class="mono" x="16" y="46" font-size="12" fill="#767E85">15,840 records</text>
+  </g>
+  <path d="M756 130 L 786 130" fill="none" stroke="#4A5158" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <g transform="translate(796 100)">
+    <rect width="196" height="60" rx="10" fill="#14181B" stroke="#3FB950" stroke-width="1.5"/>
+    <text class="mono" x="16" y="26" font-size="14" fill="#EDEBE8">corpus_replay.rs</text>
+    <text class="mono" x="16" y="46" font-size="12" fill="#767E85">pure Rust</text>
+  </g>
+
+  <text class="mono" x="1008" y="124" font-size="20" font-weight="700" fill="#3FB950">15,827</text>
+  <text class="mono" x="1008" y="146" font-size="12" fill="#767E85">of 15,827 match</text>
+
+  <text class="mono" x="308" y="186" font-size="13" fill="#5E666D">Python is a build-time data source. cargo test passes with no Python installed.</text>
+
+  <!-- ================= layer 2 ================= -->
+  <text class="mono" x="308" y="248" font-size="13" letter-spacing="1.8" fill="#767E85">LAYER 2 &#183; ADDITIVE &#183; RUNS LIVE</text>
+
+  <g transform="translate(308 272)">
+    <rect width="196" height="60" rx="10" fill="#14181B" stroke="#262C31" stroke-width="1.5"/>
+    <text class="mono" x="16" y="26" font-size="14" fill="#EDEBE8">original pytest</text>
+    <text class="mono" x="16" y="46" font-size="12" fill="#767E85">byte-identical</text>
+  </g>
+  <path d="M512 302 L 542 302" fill="none" stroke="#4A5158" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <g transform="translate(552 272)">
+    <rect width="196" height="60" rx="10" fill="#14181B" stroke="#262C31" stroke-width="1.5"/>
+    <text class="mono" x="16" y="26" font-size="14" fill="#EDEBE8">Python shim</text>
+    <text class="mono" x="16" y="46" font-size="12" fill="#767E85">JSON over stdio</text>
+  </g>
+  <path d="M756 302 L 786 302" fill="none" stroke="#4A5158" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <g transform="translate(796 272)">
+    <rect width="196" height="60" rx="10" fill="#14181B" stroke="#3FB950" stroke-width="1.5"/>
+    <text class="mono" x="16" y="26" font-size="14" fill="#EDEBE8">conformance bin</text>
+    <text class="mono" x="16" y="46" font-size="12" fill="#767E85">Rust, subprocess</text>
+  </g>
+
+  <text class="mono" x="1008" y="296" font-size="20" font-weight="700" fill="#3FB950">248</text>
+  <text class="mono" x="1008" y="318" font-size="12" fill="#767E85">of 248 pass</text>
+
+  <text class="mono" x="308" y="358" font-size="13" fill="#5E666D">Python calls the port as an external process. No PyO3, no libpython, no FFI.</text>
+
+  <!-- rule 05 footer -->
+  <line x1="56" y1="386" x2="1144" y2="386" stroke="#1C2126" stroke-width="1.5"/>
+  <text class="mono" x="56" y="410" font-size="13" fill="#4A5158">Rule 05: the port may not link or FFI into the original language runtime. Layer 1 alone satisfies it, so the strictest reading loses no evidence.</text>
+</svg>

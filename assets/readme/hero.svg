@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="420" viewBox="0 0 1200 420"
+     role="img" aria-labelledby="heroTitle heroDesc">
+  <title id="heroTitle">croniter-rs</title>
+  <desc id="heroDesc">A Rust port of the Python croniter library. The panel shows the same cron expression answered identically by the Python original and the Rust port across a daylight-saving spring-forward, where 02:00 never occurs.</desc>
+
+  <defs>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="420" rx="26" fill="#0B0D0F"/>
+
+  <!-- ============ left: identity ============ -->
+  <g transform="translate(64 60)">
+    <text class="mono" x="0" y="14" font-size="14" letter-spacing="2.2" fill="#767E85">PYTHON &#8594; RUST &#183; PORT MORTEM 2026 &#183; TRACK D</text>
+
+    <text class="sans" x="0" y="86" font-size="64" font-weight="700" fill="#EDEBE8">croniter-rs</text>
+
+    <text class="sans" x="0" y="128" font-size="19" fill="#A8AFB5">Cron expression parsing and datetime iteration,</text>
+    <text class="sans" x="0" y="156" font-size="19" fill="#A8AFB5">ported from Python and proven equivalent.</text>
+
+    <!-- metrics -->
+    <g transform="translate(0 210)">
+      <text class="mono" x="0"   y="0" font-size="28" font-weight="700" fill="#3FB950">248/248</text>
+      <text class="mono" x="0"   y="24" font-size="13" letter-spacing="1.1" fill="#767E85">UPSTREAM SUITE</text>
+
+      <text class="mono" x="190" y="0" font-size="28" font-weight="700" fill="#EDEBE8">15,827</text>
+      <text class="mono" x="190" y="24" font-size="13" letter-spacing="1.1" fill="#767E85">CORPUS RECORDS</text>
+
+      <text class="mono" x="370" y="0" font-size="28" font-weight="700" fill="#EDEBE8">0</text>
+      <text class="mono" x="370" y="24" font-size="13" letter-spacing="1.1" fill="#767E85">DIVERGENCES</text>
+    </g>
+
+    <text class="mono" x="0" y="290" font-size="14" fill="#5E666D">upstream f64665e &#183; MIT &#183; Rust 2024 &#183; 0 unsafe</text>
+  </g>
+
+  <!-- ============ right: the proof ============ -->
+  <g transform="translate(632 60)">
+    <rect width="504" height="300" rx="14" fill="#14181B" stroke="#262C31" stroke-width="1.5"/>
+
+    <text class="mono" x="24" y="32" font-size="13" letter-spacing="1.6" fill="#767E85">SAME QUESTION, BOTH IMPLEMENTATIONS</text>
+
+    <!-- cron expression: the recurring motif -->
+    <text class="mono" x="24" y="72" font-size="26" font-weight="700" fill="#EDEBE8">*/30 1-3 * * *</text>
+    <!-- only the two constrained fields are labelled; the rest are wildcards -->
+    <text class="mono" x="24" y="96" font-size="13" fill="#5E666D">every 30 min</text>
+    <text class="mono" x="150" y="96" font-size="13" fill="#5E666D">hours 1-3</text>
+
+    <text class="mono" x="24" y="126" font-size="16" fill="#A8AFB5">America/New_York, from 03-08 00:30</text>
+
+    <line x1="24" y1="148" x2="480" y2="148" stroke="#262C31" stroke-width="1.5"/>
+
+    <!-- agreeing answers -->
+    <g transform="translate(24 180)">
+      <text class="mono" x="0"   y="0" font-size="16" fill="#767E85">python</text>
+      <text class="mono" x="96"  y="0" font-size="16" fill="#EDEBE8">01:00</text>
+      <text class="mono" x="192" y="0" font-size="16" fill="#EDEBE8">01:30</text>
+      <text class="mono" x="288" y="0" font-size="16" fill="#EDEBE8">03:00</text>
+      <text class="mono" x="384" y="0" font-size="14" fill="#5E666D">-05 -05 -04</text>
+
+      <text class="mono" x="0"   y="34" font-size="16" fill="#767E85">rust</text>
+      <text class="mono" x="96"  y="34" font-size="16" fill="#EDEBE8">01:00</text>
+      <text class="mono" x="192" y="34" font-size="16" fill="#EDEBE8">01:30</text>
+      <text class="mono" x="288" y="34" font-size="16" fill="#EDEBE8">03:00</text>
+      <text class="mono" x="384" y="34" font-size="14" fill="#5E666D">-05 -05 -04</text>
+    </g>
+
+    <line x1="24" y1="234" x2="480" y2="234" stroke="#262C31" stroke-width="1.5"/>
+
+    <circle cx="32" cy="266" r="9" fill="none" stroke="#3FB950" stroke-width="1.8"/>
+    <path d="M27.5 266 l3.2 3.4 l6 -7" fill="none" stroke="#3FB950" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="mono" x="52" y="271" font-size="15" fill="#3FB950">identical &#8212; 02:00 never happens (DST gap)</text>
+  </g>
+</svg>

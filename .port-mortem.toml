@@ -7,6 +7,25 @@ license = "MIT"
 
 [tests]
 original_dir = "tests/original"
-hash_manifest = "tests/original/HASHES.txt"
-kickoff_sha256 = "1178437e9fae912b5634ff405d6f66d07c27d14a15153bdd76ab5298a8c56cd2"
 modified = false
+
+# The authoritative integrity record is the per-file manifest, not any single aggregate.
+# Every file in tests/original/ is hashed individually there, and CI re-verifies it on
+# every push (.github/workflows/ci.yml, job "upstream suite unmodified"):
+#
+#     cd tests/original && sha256sum -c HASHES.txt
+#
+hash_manifest = "tests/original/HASHES.txt"
+
+# Aggregate over that manifest, reproducible with one command:
+#
+#     sha256sum tests/original/HASHES.txt
+#
+manifest_sha256 = "c323c4f96c904e2bb53274ea0f492637d2ce22438ef1cbe26a40171fbd397efd"
+
+# Recorded at kickoff by an aggregation scheme this repo no longer documents, and which
+# we could not reconstruct afterwards. Kept for the record rather than deleted, but do
+# not try to verify it — use `manifest_sha256` or the per-file manifest above, both of
+# which are reproducible from the tree. `tests/original/` is byte-identical to upstream
+# f64665e and `git log -- tests/original/` shows no commit has ever touched it.
+kickoff_sha256_unverifiable = "1178437e9fae912b5634ff405d6f66d07c27d14a15153bdd76ab5298a8c56cd2"

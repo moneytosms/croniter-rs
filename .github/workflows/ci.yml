@@ -57,6 +57,16 @@ jobs:
         working-directory: tests/original
         run: sha256sum -c HASHES.txt
 
+      # Binds the manifest itself, so neither a test file nor its recorded hash can be
+      # edited without failing here. Value lives in .port-mortem.toml.
+      - name: Verify the manifest matches .port-mortem.toml
+        run: |
+          recorded=$(grep '^manifest_sha256' .port-mortem.toml | cut -d'"' -f2)
+          actual=$(sha256sum tests/original/HASHES.txt | cut -d' ' -f1)
+          echo "recorded=$recorded"
+          echo "actual  =$actual"
+          test "$recorded" = "$actual"
+
   # Deliverable 3: the original Python test suite, unmodified, against the port.
   original-suite:
     name: original Python suite via the bridge
