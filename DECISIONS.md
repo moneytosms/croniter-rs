@@ -219,8 +219,9 @@ API. Making the bridge faithful here needs an instance-handle protocol (create o
 address it by id), which is a larger change to a transport that exists only as the
 *secondary* verification path.
 
-The cost is confined to `tests/original/test_croniter_random.py`: 246-247 of 248 tests
-pass through the bridge, and which of the random cases fail varies run to run because the
-values are drawn randomly. Nothing outside that file is affected. The primary check, the
+The cost is confined to `tests/original/test_croniter_random.py`: 245-248 of 248 tests
+pass through the bridge over 8 sampled runs (one run passed all 248), and which of that
+file's 4 tests fail varies run to run because the values are drawn randomly. Nothing
+outside that file is ever affected. The primary check, the
 golden-corpus replay, excludes the same expressions for the same reason (§12, §15) and
 passes 100% on everything else.

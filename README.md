@@ -60,11 +60,12 @@ subprocess over line-delimited JSON. This runs the byte-identical original test 
 against the port. Python calls the port as an external process; the port contains no
 Python. See `DECISIONS.md` §1 for the full reasoning.
 
-> **246–247 of 248 tests pass** (plus all 92 subtests). Every failure is in
-> `test_croniter_random.py`, and the count varies run to run because the values are drawn
-> randomly: the bridge is stateless, so an `R` expression re-draws on each call instead of
-> being fixed at construction. That is a property of the transport, not of the port — the
-> crate's own API holds the expansion for the object's lifetime. See §16.
+> **245–248 of 248 tests pass** (plus all 92 subtests), measured over 8 runs; one run
+> passed all 248. Every failure is one of the 4 tests in `test_croniter_random.py`, and
+> which of them fail varies run to run because the values are drawn randomly: the bridge is
+> stateless, so an `R` expression re-draws on each call instead of being fixed at
+> construction. That is a property of the transport, not of the port — the crate's own API
+> holds the expansion for the object's lifetime. See §16.
 
 **Differential fuzzing (continuous).** `fuzz/harness.py` generates random expressions,
 start instants and DST-boundary cases, runs each against both the pinned Python and the
