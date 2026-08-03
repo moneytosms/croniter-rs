@@ -1,0 +1,16 @@
+# GitHub's language statistics count every .py file in the tree, which reports this
+# Python-to-Rust port as majority Python. The largest contributor is the upstream test
+# suite, which is verbatim third-party code that Rule 02 requires be left unmodified.
+# That is precisely what `linguist-vendored` is for.
+#
+# Only genuinely third-party code is marked here. The Python we wrote ourselves, meaning
+# the conformance bridge, the corpus extractor, the fuzz harness and the benchmark
+# comparison script, stays counted, because we did write it and it is part of the work.
+tests/original/** linguist-vendored
+
+# 4.4 MB of extracted golden-corpus records. Data, not source, and it should not appear
+# in diffs by default.
+tests/port/corpus.json linguist-generated diff=nodiff
+
+# Differential fuzz output. Evidence rather than source.
+fuzz/log.txt linguist-generated diff=nodiff
