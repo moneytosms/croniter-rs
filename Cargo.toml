@@ -6,7 +6,8 @@ rust-version = "1.97.1"
 license = "MIT"
 description = "Rust port of pallets-eco/croniter: cron expression parsing and datetime iteration"
 readme = "README.md"
-repository = "https://github.com/pallets-eco/croniter"
+# This port. The Python it was ported from is recorded in .port-mortem.toml.
+repository = "https://github.com/moneytosms/croniter-rs"
 documentation = "https://docs.rs/croniter"
 keywords = ["cron", "crontab", "schedule", "scheduler", "datetime"]
 categories = ["date-and-time", "parser-implementations"]

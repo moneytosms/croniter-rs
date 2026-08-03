@@ -12,7 +12,8 @@ use std::path::PathBuf;
 use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone};
 use chrono_tz::Tz;
 use croniter::{
-    Croniter, CroniterError, Occurrence, Options, RetType, croniter_range, croniter_range_tz,
+    Croniter, CroniterError, Occurrence, Options, RetType, StartTime, croniter_range,
+    croniter_range_tz,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -61,6 +62,9 @@ struct Args {
     /// attribute after construction, which bounds the search without marking it explicit.
     #[serde(default)]
     state_max_years_between_matches: Option<i64>,
+    /// True when the recorded call passed `start_time=` rather than reading the cursor.
+    #[serde(default)]
+    explicit_start_time: bool,
 }
 
 impl Args {
@@ -192,6 +196,17 @@ fn aware_start(rec: &Record) -> Result<Option<DateTime<Tz>>, CroniterError> {
             Ok(Some(aware))
         }
         _ => Ok(None),
+    }
+}
+
+/// The instant an explicitly-passed `start_time` denotes, in whichever form the record
+/// carries.
+fn start_time_of(rec: &Record) -> Result<StartTime, CroniterError> {
+    match aware_start(rec)? {
+        Some(aware) => Ok(StartTime::Aware(aware)),
+        None => parse_naive(&rec.start)
+            .map(StartTime::Naive)
+            .ok_or_else(|| CroniterError::Other(format!("unparseable start {:?}", rec.start))),
     }
 }
 
@@ -327,13 +342,24 @@ fn run_record(rec: &Record) -> Outcome {
                 let cron = build(rec)?;
                 Ok(render(cron.get_current(ret)))
             }
+            // An explicit `start_time` is a different call from stepping the cursor:
+            // `get_next` refuses it when the expression was expanded from the
+            // construction start, so it has to be replayed through the same door.
             "next" => {
                 let mut cron = build(rec)?;
-                Ok(render(cron.get_next(ret)?))
+                if rec.args.explicit_start_time {
+                    Ok(render(cron.get_next_from(start_time_of(rec)?, ret)?))
+                } else {
+                    Ok(render(cron.get_next(ret)?))
+                }
             }
             "prev" => {
                 let mut cron = build(rec)?;
-                Ok(render(cron.get_prev(ret)?))
+                if rec.args.explicit_start_time {
+                    Ok(render(cron.get_prev_from(start_time_of(rec)?, ret)?))
+                } else {
+                    Ok(render(cron.get_prev(ret)?))
+                }
             }
             "all_next" | "all_prev" => {
                 let mut cron = build(rec)?;
@@ -423,15 +449,13 @@ const SUPPORTED: [&str; 7] = [
 /// recorded. Each is a call that simply does not typecheck or does not exist in this
 /// port, not a behaviour it gets wrong — see DECISIONS.md §15. Matched on the exact
 /// message so that a *different* error arising from the same call still fails loudly.
-const UNREPRESENTABLE: [&str; 4] = [
+const UNREPRESENTABLE: [&str; 3] = [
     // `ret_type` is an enum here, so there is no third value to reject.
     "Invalid ret_type, only 'float' or 'datetime' is acceptable.",
     // `hash_id` is `Option<Vec<u8>>`; the suite passes a dict to prove Python rejects it.
     "hash_id must be bytes or UTF-8 string",
     // `croniter_range` takes two `NaiveDateTime`s, so start and stop cannot disagree.
     "The start and stop must be same type.",
-    // `get_next` takes no `start_time`, so the combination it guards against is unbuildable.
-    "start_time is not supported when using expand_from_start_time = True.",
 ];
 
 fn is_unrepresentable(rec: &Record) -> bool {

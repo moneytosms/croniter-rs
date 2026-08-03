@@ -114,6 +114,29 @@ impl Default for Options {
     }
 }
 
+/// A start instant for the `*_from` calls, mirroring croniter's `start_time` argument.
+///
+/// Python takes one parameter because a `datetime` carries its own optional `tzinfo`.
+/// Rust splits naive and aware into different types, so the choice is spelled out here
+/// rather than duplicated across four method names.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StartTime {
+    Naive(NaiveDateTime),
+    Aware(DateTime<Tz>),
+}
+
+impl From<NaiveDateTime> for StartTime {
+    fn from(d: NaiveDateTime) -> Self {
+        Self::Naive(d)
+    }
+}
+
+impl From<DateTime<Tz>> for StartTime {
+    fn from(d: DateTime<Tz>) -> Self {
+        Self::Aware(d)
+    }
+}
+
 /// The port of croniter's `croniter` class.
 #[derive(Debug, Clone)]
 pub struct Croniter {
@@ -128,6 +151,8 @@ pub struct Croniter {
     max_years_between_matches: i64,
     max_years_explicitly_set: bool,
     is_prev: bool,
+    /// Kept because `get_next_from` has to refuse when it is set.
+    expand_from_start_time: bool,
 }
 
 impl Croniter {
@@ -229,6 +254,7 @@ impl Croniter {
             max_years_between_matches,
             max_years_explicitly_set,
             is_prev: opts.is_prev,
+            expand_from_start_time: opts.expand_from_start_time,
         }
     }
 
@@ -347,6 +373,49 @@ impl Croniter {
     /// croniter's `get_prev` (croniter.py:355-358).
     pub fn get_prev(&mut self, ret_type: Option<RetType>) -> Result<Occurrence> {
         self.step(ret_type, true, true)
+    }
+
+    /// `get_next` with croniter's `start_time` argument: search from `start` rather than
+    /// from the cursor, and move the cursor there.
+    ///
+    /// Refuses when the expression was expanded relative to the construction start
+    /// (croniter.py:347-350). The two settings contradict each other — the parse tree is
+    /// already anchored to one instant, so honouring a different one would search a
+    /// schedule the caller never asked for — and croniter raises a bare `ValueError`
+    /// rather than silently picking one.
+    pub fn get_next_from(
+        &mut self,
+        start: StartTime,
+        ret_type: Option<RetType>,
+    ) -> Result<Occurrence> {
+        if self.expand_from_start_time {
+            return Err(CroniterError::Value(
+                "start_time is not supported when using expand_from_start_time = True.".to_string(),
+            ));
+        }
+        self.set_start(start);
+        self.step(ret_type, false, true)
+    }
+
+    /// `get_prev` with croniter's `start_time` argument.
+    ///
+    /// Deliberately unguarded: croniter puts the `expand_from_start_time` check on
+    /// `get_next` only (croniter.py:355-358), and this port reproduces the asymmetry
+    /// rather than tidying it.
+    pub fn get_prev_from(
+        &mut self,
+        start: StartTime,
+        ret_type: Option<RetType>,
+    ) -> Result<Occurrence> {
+        self.set_start(start);
+        self.step(ret_type, true, true)
+    }
+
+    fn set_start(&mut self, start: StartTime) {
+        match start {
+            StartTime::Naive(d) => self.set_current_naive(d),
+            StartTime::Aware(d) => self.set_current_aware(d),
+        }
     }
 
     fn step(

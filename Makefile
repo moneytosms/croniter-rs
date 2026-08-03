@@ -1,4 +1,4 @@
-.PHONY: build test test-original bench bench-compare corpus fuzz fmt lint
+.PHONY: build test test-original bench bench-compare corpus fuzz demo fmt lint
 
 build:
 	cargo build --release
@@ -23,6 +23,10 @@ corpus:
 # Differential fuzz against the pinned Python; writes fuzz/log.txt.
 fuzz:
 	tools/extract_corpus/.venv/bin/python fuzz/harness.py --seconds 120 --seed 1 --log fuzz/log.txt
+
+# The scripted walkthrough behind the demo video. DEMO_NO_PAUSE=1 to run unattended.
+demo:
+	./tools/demo.sh
 
 fmt:
 	cargo fmt

@@ -50,6 +50,17 @@ except ImportError:
 
 OPS = ["next", "prev", "current", "validate", "expand", "range", "match", "match_range"]
 
+# Highest year the two timezone databases still agree on.
+#
+# chrono-tz's generated transition table for a zone runs out after its last explicit
+# transition and then holds the final offset forever; Python's zoneinfo keeps applying the
+# POSIX TZ footer rule indefinitely. For Australia/Sydney they agree through 2099 and part
+# ways in 2100, where chrono-tz reports +11:00 (AEDT) in June -- Australian winter -- while
+# zoneinfo correctly reports +10:00. Generating starts past this point measures the two tz
+# databases against each other rather than the two croniter implementations, which is not
+# what this harness is for. See DECISIONS.md section 19.
+MAX_TZ_AGREED_YEAR = 2099
+
 # A case slower than this is reported separately rather than silently dragging the rate.
 SLOW_CASE_SECONDS = 5.0
 
@@ -115,7 +126,7 @@ def gen_field(rng: random.Random, kind: str) -> str:
         "day": (1, 31, None),
         "month": (1, 12, MONTH_NAMES),
         "dow": (0, 6, DOW_NAMES),
-        "year": (1970, 2099, None),
+        "year": (1970, MAX_TZ_AGREED_YEAR, None),
     }
     lo, hi, names = ranges[kind]
     choice = rng.random()
@@ -233,7 +244,7 @@ def gen_naive_dt(rng: random.Random) -> dt.datetime:
         base = dt.datetime.fromisoformat(iso)
         return base + dt.timedelta(minutes=rng.randint(-5, 5))
     # otherwise uniform-ish random date
-    year = rng.randint(1970, 2100)
+    year = rng.randint(1970, MAX_TZ_AGREED_YEAR)
     month = rng.randint(1, 12)
     day = rng.randint(1, 28)
     return dt.datetime(year, month, day, rng.randint(0, 23), rng.randint(0, 59), rng.randint(0, 59))

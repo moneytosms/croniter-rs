@@ -180,51 +180,59 @@ regressions over weeks, which is not what this deliverable is.
 `rust-toolchain.toml` pins 1.97.1 and edition 2024, so `make build` reproduces from a
 clean clone with no environment-specific setup, satisfying Rule 03.
 
-## 15. Four corpus records are unrepresentable in Rust, and are excluded by name
+## 15. Three corpus records are unrepresentable in Rust, and are excluded by name
 
 **Python:** the suite includes calls whose entire purpose is to prove that CPython raises
 on a bad *type*: `ret_type=<something else>` (`TypeError`), `hash_id={1: 2}` (`TypeError`),
 and a `croniter_range` whose `start` is a float while its `stop` is a datetime
-(`CroniterBadTypeRangeError`). A fourth passes `start_time=` to `get_next()` while
-`expand_from_start_time=True` is set, which croniter guards with a `ValueError`
-(croniter.py:347-350).
+(`CroniterBadTypeRangeError`).
 
-**Port:** `RetType` is an enum, `hash_id` is `Option<Vec<u8>>`, `croniter_range` takes two
-`NaiveDateTime`s, and `get_next` takes no `start_time`. None of these calls can be
-constructed, so there is no behaviour to match.
+**Port:** `RetType` is an enum, `hash_id` is `Option<Vec<u8>>`, and `croniter_range` takes
+two `NaiveDateTime`s. None of these calls can be constructed, so there is no behaviour to
+match — the type system already rules them out at the call site, which is the outcome the
+Python test is asking for.
 
-`tests/corpus_replay.rs` excludes exactly these four, keyed on the error message the corpus
-recorded, and reports them as `unrepresentable-in-rust` in its summary rather than counting
-them as passes. Matching on the message rather than the error *class* is deliberate: if one
-of these call sites ever produced a different failure, it would still be counted as a
-divergence.
+`tests/corpus_replay.rs` excludes exactly these three, keyed on the error message the
+corpus recorded, and reports them as `unrepresentable-in-rust` in its summary rather than
+counting them as passes. Matching on the message rather than the error *class* is
+deliberate: if one of these call sites ever produced a different failure, it would still be
+counted as a divergence.
+
+This list was four. The fourth was `get_next(start_time=...)` with
+`expand_from_start_time=True`, which croniter refuses with a bare `ValueError`
+(croniter.py:347-350) — excluded only because the port had no `start_time` parameter to
+pass. That was a missing feature wearing the costume of a type-system win, so the parameter
+now exists (`get_next_from` / `get_prev_from`, taking a `StartTime`), the guard is
+implemented, and the record is verified like any other.
 
 The remaining exclusion is the 10 `R`/`R(a-b)` records, which are random by construction
 (§12) and reported separately as `random-expr (unverifiable)`. Everything else in the
-corpus — 15,824 records — is replayed and compared.
+corpus — 15,827 records — is replayed and compared.
 
-## 16. The conformance bridge is stateless, so random expressions diverge across calls
+## 16. The conformance bridge holds one parse per Python object
 
 **Python:** `croniter("R R R(10-20) * *", start)` draws its random values once, in
 `__init__`, and every subsequent `get_next()` reuses that one expansion.
 
-**Bridge:** the shim under `tools/bridge/` sends `(expr, start, args)` per call and the
-Rust side builds a fresh `Croniter` for each request. That is fine for every deterministic
-expression — the expansion is a pure function of the inputs — but for an `R` expression it
-means a new draw per call, so consecutive `get_next()`s can move backwards.
+**Bridge, first cut:** the shim sent `(expr, start, args)` per call and the Rust side built
+a fresh `Croniter` for each request. Stateless and simple, and for every deterministic
+expression exactly equivalent — the expansion is a pure function of its inputs. For an `R`
+expression it meant a new draw per call, so consecutive `get_next()`s wandered instead of
+advancing, and 1-3 of the 4 tests in `test_croniter_random.py` failed depending on the
+draw.
 
-This is a property of the bridge, not of the port: `Croniter` holds its `Expanded` for its
-whole lifetime, which is why the same expressions behave correctly through the crate's own
-API. Making the bridge faithful here needs an instance-handle protocol (create once, then
-address it by id), which is a larger change to a transport that exists only as the
-*secondary* verification path.
+**Bridge, now:** a handle protocol. The shim's `__init__` issues `create`, which parses
+once, stores the `Expanded` and returns an id; every later request quotes that handle and
+the engine reuses the stored parse. `__del__` issues `destroy`. The `expand` op honours the
+handle too, so reading `.expanded` off an instance reports the parse that instance is
+actually scheduling from — an object can no longer disagree with itself.
 
-The cost is confined to `tests/original/test_croniter_random.py`: 245-248 of 248 tests
-pass through the bridge over 8 sampled runs (one run passed all 248), and which of that
-file's 4 tests fail varies run to run because the values are drawn randomly. Nothing
-outside that file is ever affected. The primary check, the
-golden-corpus replay, excludes the same expressions for the same reason (§12, §15) and
-passes 100% on everything else.
+This needed a way to build a scheduler from an already-parsed expression, so
+`Croniter::from_expanded` is public. That is useful well beyond the bridge: parsing is the
+expensive half of a single `get_next` (see `bench/results.json`), so a caller scheduling
+many start times against one expression should pay for it once.
+
+Result: **248 of 248**, thirteen consecutive runs, no flakes.
 
 ## 17. `croniter_range` streams; the `Vec` forms are wrappers
 
@@ -275,3 +283,35 @@ kept as separate cases so a failure says immediately which path broke. proptest 
 than another random loop, for the shrinking: a counterexample arrives minimal.
 
 88,000 generated cases pass.
+
+## 19. chrono-tz stops projecting DST after a zone's last explicit transition
+
+Found by differential fuzzing on a fresh seed, and worth writing up because the failure
+looked exactly like a search bug and was not one.
+
+A `get_prev` for `*/13 14-15 2-13 6 1` in `Australia/Sydney`, starting in December 2100,
+disagreed with the original by exactly 3600 seconds. The *local* time both produced was
+identical — `2100-06-07 15:52:00`. Only the UTC offset differed: the port said `+11:00`,
+the original said `+10:00`. June is Australian winter, so `+10:00` is right.
+
+**Cause.** A tzfile carries explicit transitions up to roughly 2037 plus a POSIX TZ footer
+describing the rule to apply from then on. Python's `zoneinfo` evaluates that footer
+indefinitely. chrono-tz compiles a fixed transition table and, once past its final entry,
+holds the last offset forever. For `Australia/Sydney` the two agree through 2099 and part
+company in 2100, where chrono-tz reports permanent AEDT.
+
+**Response.** Nothing in this port is wrong, and there is nothing here to fix — the tz
+database is a dependency, and swapping it (§10) would trade this for a different set of
+edge cases. Instead:
+
+- `tests/regressions.rs::chrono_tz_dst_projection_ends_after_2099` asserts the boundary, so
+  it is a checked fact rather than folklore. If a chrono-tz release extends the table, that
+  test fails and says so.
+- `fuzz/harness.py` caps generated years at `MAX_TZ_AGREED_YEAR = 2099`. Past that the
+  harness would be comparing two timezone databases rather than two croniter
+  implementations, which is not what it is for. The bound is named and commented rather
+  than being a bare literal.
+
+Callers scheduling in a DST-observing zone beyond 2099 should know the offset may be an
+hour out. That is a real limitation, not a hypothetical one, which is why it is here rather
+than in a code comment.

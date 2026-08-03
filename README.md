@@ -1,10 +1,21 @@
 # croniter-rs
 
+[![CI](https://github.com/moneytosms/croniter-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/moneytosms/croniter-rs/actions/workflows/ci.yml)
+
 A Rust port of [`pallets-eco/croniter`](https://github.com/pallets-eco/croniter), built for
 [Port Mortem 2026](https://coderesurrection.com/2026/), Track D (Python → Rust).
 
 Source pinned at commit `f64665e`. 1,586 lines of Python library against 4,755 lines of
 test suite.
+
+| | |
+| --- | --- |
+| Original test suite, unmodified | **248 / 248** + 92 subtests |
+| Golden-corpus equivalence | **15,827 / 15,827** (100.00%) |
+| Differential fuzzing | **0 divergences** across 4 seeds |
+| Property tests | **88,000 generated cases** |
+| `unsafe` blocks | **0** |
+| `unwrap`/`panic` outside tests | **0** |
 
 ## Why this repo
 
@@ -26,14 +37,26 @@ make build
 That is `cargo build --release` behind a pinned toolchain (`rust-toolchain.toml`, Rust
 1.97.1, edition 2024). It needs no Python, no system libraries, and no environment setup.
 
+Or, with nothing installed but Docker — this builds the port and runs the original Python
+suite against it:
+
+```sh
+docker build -t croniter-rs . && docker run --rm croniter-rs
+```
+
 ## Test
 
 ```sh
 make test           # native Rust: unit + property + regression tests, golden-corpus replay
 make test-original  # the original Python suite, live, against the port
+make demo           # the scripted walkthrough, every figure computed live
 ```
 
-`make test` is the one that must be green and needs nothing but Rust.
+`make test` is the one that must be green, and it needs nothing but Rust: the golden corpus
+is committed data, so behavioural equivalence is checked with no Python on the machine.
+
+`make corpus`, `make fuzz` and `make bench-compare` regenerate the artifacts; each fetches
+the pinned upstream commit into a gitignored scratch directory if it isn't already there.
 
 ## How this port is verified
 
@@ -46,13 +69,12 @@ instant, timezone, every constructor keyword — together with what Python retur
 raised. The result is `tests/port/corpus.json`. `tests/corpus_replay.rs` replays it in
 pure Rust. Python is a build-time data source and never a runtime dependency.
 
-> **15,824 / 15,824 records match (100.00%).**
+> **15,827 / 15,827 records match (100.00%).**
 >
-> Of the 15,838 records extracted, 14 are excluded *by name* and reported separately by
-> the test rather than counted as passes: 10 use croniter's `R` random syntax and have no
-> stable answer to check against (§12), and 4 are calls that cannot be constructed against
-> the Rust API at all — a bad `ret_type`, a `dict` as `hash_id`, mismatched `croniter_range`
-> bound types (§15).
+> Of the 15,840 records extracted, 13 are excluded *by name* and reported separately by the
+> test rather than counted as passes: 10 use croniter's `R` random syntax and have no stable
+> answer to check against (§12), and 3 are calls the Rust API cannot express at all — a bad
+> `ret_type`, a `dict` as `hash_id`, mismatched `croniter_range` bound types (§15).
 
 **Conformance bridge (secondary).** `tools/bridge/croniter/` is a pure-Python shim that
 satisfies `import croniter` and forwards each call to a long-lived `croniter-conformance`
@@ -79,7 +101,25 @@ expressions and again against `L`/`W`/`#`. **88,000 generated cases, all passing
 
 `tests/original/` is a verbatim copy of the upstream suite. `tests/original/HASHES.txt`
 carries per-file SHA-256, and `.port-mortem.toml` records the aggregate. Nothing in it was
-edited.
+edited, and CI verifies the hashes on every push.
+
+## Deliverables
+
+| # | Deliverable | Where |
+| --- | --- | --- |
+| 1 | Public repo, OSI licence | this repo, MIT (inherited) — [`LICENSE`](./LICENSE) |
+| 2 | One-command build, runnable artifact | `make build`, or `docker build -t croniter-rs . && docker run --rm croniter-rs` — built and run in CI |
+| 3 | Original suite, hash-pinned, passing | [`tests/original/`](./tests/original) + [`HASHES.txt`](./tests/original/HASHES.txt); `make test-original` → 248/248 |
+| 4 | Differential fuzz harness + log | [`fuzz/harness.py`](./fuzz/harness.py), [`fuzz/log.txt`](./fuzz/log.txt) |
+| 5 | DECISIONS.md | [18 entries](./DECISIONS.md) |
+| 6 | Benchmark report + methodology | [`bench/methodology.md`](./bench/methodology.md), [`bench/results.json`](./bench/results.json), [`bench/compare.py`](./bench/compare.py) |
+| 7 | 5-minute demo video | `make demo` is the scripted walkthrough it records; **the recording itself is not yet in the repo** |
+
+Everything above except the video is re-checked by
+[CI](./.github/workflows/ci.yml) on every push: build, `fmt --check`, `clippy -D warnings`,
+the full Rust test suite, the corpus replay, the upstream suite through the bridge, the
+suite's own hashes, a Docker build-and-run, and a 90-second fuzz run on a fresh seed that
+fails the build on any divergence.
 
 ## Layout
 
@@ -89,6 +129,7 @@ src/calc.rs     next/prev search, naive time  (croniter _calc)
 src/tz.rs       DST gap and fold resolution   (croniter _add_tzinfo)
 src/lib.rs      public API and the DST tail   (croniter class)
 src/bin/        conformance JSON server, benchmark sample runner
+.github/        CI: build, lint, tests, upstream suite, docker, fuzz
 tests/original/ upstream suite, unmodified, hash-pinned
 tests/port/     golden corpus
 tests/          corpus replay, property tests, regression tests
@@ -118,10 +159,18 @@ single-machine with no CPU pinning.
 ## Divergences
 
 Every non-trivial difference from the Python is written up in
-[`DECISIONS.md`](./DECISIONS.md) — 18 entries, including the one known behavioural
-divergence (day-of-month/day-of-week union across a DST transition, §5), the four calls
-Rust's type system makes unconstructible (§15), the bridge's handle protocol (§16), and
-the range walk that streams rather than collecting (§17).
+[`DECISIONS.md`](./DECISIONS.md) — 19 entries, including the one known behavioural
+divergence (day-of-month/day-of-week union across a DST transition, §5), the three calls
+Rust's type system makes unconstructible (§15), the bridge's handle protocol (§16), the
+range walk that streams rather than collecting (§17), and the point past which chrono-tz
+stops projecting DST at all (§19).
+
+That last one is what differential fuzzing is for. A `get_prev` in `Australia/Sydney` at a
+2100 start came back exactly an hour off — same local time, wrong UTC offset. It was not a
+search bug: chrono-tz's transition table runs out after a zone's last explicit transition
+and then holds the final offset forever, while Python's `zoneinfo` keeps applying the POSIX
+rule. The two agree through 2099. The boundary is now asserted by a test rather than
+assumed, so a chrono-tz release that extends the table will say so.
 
 ## Safety and error handling
 

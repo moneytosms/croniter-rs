@@ -197,6 +197,11 @@ def pytest_configure(config):
     def _call_and_record(op, self, orig_fn, ret_type_kw, start_time_kw, *a, **kw):
         expr = getattr(self, "_corpus_expr", None)
         args = base_args(self)
+        # `start` alone cannot say whether the caller *passed* a start_time or whether
+        # the recorder simply read the cursor -- and the two differ: get_next(start_time=)
+        # is refused outright when expand_from_start_time is set.
+        if start_time_kw is not None:
+            args["explicit_start_time"] = True
         s_start, tzf = effective_position(self, start_time_kw)
         effective_ret_type = ret_type_kw or getattr(self, "_ret_type", float)
         ret_str = (

@@ -8,7 +8,8 @@
 use chrono::{NaiveDate, NaiveDateTime};
 use chrono_tz::America::New_York;
 use croniter::{
-    Croniter, CroniterError, Occurrence, Options, RetType, croniter_range, croniter_range_tz,
+    Croniter, CroniterError, Occurrence, Options, RetType, StartTime, croniter_range,
+    croniter_range_tz,
 };
 
 fn dt(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> NaiveDateTime {
@@ -285,6 +286,98 @@ fn range_iterator_does_not_materialize_the_whole_window() {
         started.elapsed().as_secs() < 5,
         "taking 3 items took {:?}; the range is being materialized eagerly",
         started.elapsed()
+    );
+}
+
+/// `get_next_from` searches from the instant it is given, and refuses the one
+/// combination croniter refuses.
+///
+/// The guard exists because the two settings contradict each other: with
+/// `expand_from_start_time` the parse tree is already anchored to the construction start,
+/// so honouring a different one would search a schedule the caller never asked for.
+/// croniter raises a bare `ValueError` -- not a `CroniterError` -- and the class name is
+/// part of the contract, since `CroniterError` is a *subclass* of `ValueError`.
+#[test]
+fn get_next_from_searches_from_the_given_instant() {
+    let mut cron = Croniter::new("0 0 * * *", dt(2024, 1, 1, 0, 0, 0)).expect("parses");
+    let got = cron
+        .get_next_from(
+            StartTime::Naive(dt(2024, 6, 15, 12, 0, 0)),
+            Some(RetType::DateTime),
+        )
+        .expect("advances");
+    assert_eq!(naive_of(got), dt(2024, 6, 16, 0, 0, 0));
+
+    // The cursor moved with it, so the next step continues from there.
+    let after = cron.get_next(Some(RetType::DateTime)).expect("advances");
+    assert_eq!(naive_of(after), dt(2024, 6, 17, 0, 0, 0));
+}
+
+#[test]
+fn get_next_from_is_refused_when_expanding_from_start_time() {
+    let mut cron = Croniter::with_options(
+        "0 0 */5 * *",
+        Some(dt(2024, 7, 12, 0, 0, 0)),
+        None,
+        Options {
+            expand_from_start_time: true,
+            ..Default::default()
+        },
+    )
+    .expect("parses");
+
+    let err = cron
+        .get_next_from(StartTime::Naive(dt(2024, 7, 20, 0, 0, 0)), None)
+        .expect_err("must refuse");
+    assert_eq!(err.class_name(), "ValueError");
+    assert!(
+        !err.is_croniter_error(),
+        "a bare ValueError is not a CroniterError"
+    );
+
+    // get_prev carries no such guard upstream, and the port reproduces the asymmetry.
+    assert!(
+        cron.get_prev_from(StartTime::Naive(dt(2024, 7, 20, 0, 0, 0)), None)
+            .is_ok()
+    );
+}
+
+/// Documents where chrono-tz stops agreeing with the tz database Python reads.
+///
+/// Found by differential fuzzing: a `get_prev` in Australia/Sydney at a 2100 start
+/// produced the right *local* time and the wrong UTC offset, an exact one-hour gap.
+/// chrono-tz's generated transition table runs out after a zone's last explicit
+/// transition and then holds the final offset forever, while Python's zoneinfo keeps
+/// applying the POSIX TZ footer rule. For Sydney they agree through 2099 and part ways in
+/// 2100, where chrono-tz claims +11:00 in June -- Australian winter.
+///
+/// Nothing in this port is wrong, and there is nothing here to fix: the tz database is a
+/// dependency. The test exists so the boundary is asserted rather than assumed, and so a
+/// chrono-tz release that fixes it fails here and tells us the fuzzer's year bound can be
+/// lifted. See DECISIONS.md section 19.
+#[test]
+fn chrono_tz_dst_projection_ends_after_2099() {
+    use chrono::TimeZone;
+    use chrono_tz::Australia::Sydney;
+
+    let june = |y: i32| {
+        Sydney
+            .from_local_datetime(&dt(y, 6, 15, 12, 0, 0))
+            .earliest()
+            .expect("June noon is never inside a transition")
+            .format("%z")
+            .to_string()
+    };
+
+    // Southern-hemisphere winter: standard time, +10:00.
+    assert_eq!(june(2098), "+1000");
+    assert_eq!(june(2099), "+1000", "last year the two databases agree on");
+
+    assert_eq!(
+        june(2100),
+        "+1100",
+        "chrono-tz still projects DST here; if this now reports +1000 the upstream table \
+         has been extended, and fuzz/harness.py's MAX_TZ_AGREED_YEAR can be raised"
     );
 }
 

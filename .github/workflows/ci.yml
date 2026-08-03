@@ -1,0 +1,145 @@
+name: CI
+
+# Every claim the README makes is checked here, because a claim nothing re-checks is a
+# claim about the past. The jobs are split so a red badge says *which* guarantee broke:
+# the crate itself, agreement with Python, or the properties that hold regardless of
+# what Python does.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The one that must be green with nothing but Rust installed. No Python anywhere in
+  # this job, which is the point: the golden corpus is committed data, so behavioural
+  # equivalence is checked without the source runtime being present at all.
+  rust:
+    name: build, lint, test (no Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins the version; this action honours it.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Tests (unit, corpus replay, properties, regressions)
+        run: cargo test --release
+
+      # The headline number, printed into the log so a run can be read without
+      # rerunning it locally.
+      - name: Corpus equivalence
+        run: cargo test --release --test corpus_replay -- --nocapture
+
+  # The upstream suite is byte-identical and hash-pinned. Verifying the hashes here
+  # means a submission cannot quietly drift from the code it was scored against.
+  suite-integrity:
+    name: upstream suite unmodified
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify per-file hashes
+        working-directory: tests/original
+        run: sha256sum -c HASHES.txt
+
+  # Deliverable 3: the original Python test suite, unmodified, against the port.
+  original-suite:
+    name: original Python suite via the bridge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run tests/original against croniter-conformance
+        run: ./tools/bridge/run_original_suite.sh
+
+  # Deliverable 2: one command, runnable artifact. Built on every change so the
+  # Dockerfile cannot rot into a file that only looks correct.
+  docker:
+    name: docker build and run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: croniter-rs:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Run the suite inside the image
+        run: docker run --rm croniter-rs:ci
+
+  # Deliverable 4, and the Differential Fuzz Survivor bonus: 60+ continuous seconds
+  # against the pinned original, zero divergences. Fails the build on any divergence.
+  fuzz:
+    name: differential fuzz (90s)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - name: Build the conformance binary
+        run: cargo build --release --bin croniter-conformance
+      - name: Fetch the pinned original and its venv
+        run: ./tools/extract_corpus/run.sh
+      - name: Fuzz
+        run: |
+          tools/extract_corpus/.venv/bin/python fuzz/harness.py \
+            --seconds 90 --seed "${GITHUB_RUN_NUMBER:-1}" --log fuzz/ci-log.txt
+          # The harness reports divergences rather than exiting non-zero, so the gate
+          # is here. A fresh seed each run means CI explores new inputs over time
+          # instead of re-proving the committed log.
+          if ! grep -qE 'divergences=0( |$)' fuzz/ci-log.txt; then
+            echo "::error::differential fuzzing found divergences"
+            grep -E '^DIVERGENCE' fuzz/ci-log.txt | head -20
+            exit 1
+          fi
+          tail -5 fuzz/ci-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fuzz-log
+          path: fuzz/ci-log.txt
+
+  # The corpus is committed data, so it can drift from the extractor that produces it.
+  # Regenerating and replaying catches that.
+  #
+  # Note this deliberately does *not* diff the file. Roughly 11,000 records come from
+  # calls the suite made without a start_time, so croniter used the wall clock and the
+  # recorded `start` differs on every extraction. Byte-identity is the wrong invariant;
+  # "a freshly extracted corpus still replays clean" is the right one.
+  corpus-reproducible:
+    name: corpus regenerates and still replays
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - name: Regenerate from the pinned upstream commit
+        run: ./tools/extract_corpus/run.sh
+      - name: Replay the freshly extracted corpus
+        run: cargo test --release --test corpus_replay -- --nocapture
