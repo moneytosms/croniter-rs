@@ -225,3 +225,53 @@ file's 4 tests fail varies run to run because the values are drawn randomly. Not
 outside that file is ever affected. The primary check, the
 golden-corpus replay, excludes the same expressions for the same reason (§12, §15) and
 passes 100% on everything else.
+
+## 17. `croniter_range` streams; the `Vec` forms are wrappers
+
+**Python:** `croniter_range` is a generator. Callers take what they need and the rest is
+never computed.
+
+**Port (first cut):** it collected into a `Vec` and returned that. Behaviourally identical
+for any range a test would write, and the golden corpus never noticed — every `range`
+record in it is a handful of results.
+
+Differential fuzzing noticed. A generated case walked
+`*/9 * * 1-21 1-10 3,sun` with `second_at_beginning` across a year and took **92 seconds**,
+because the port enumerated every fire in the window before returning the first one.
+Nothing was *wrong* with the answer; the shape of the computation was wrong. That is a
+memory and latency profile the original does not have, and on a wide enough window it is
+the difference between an instant answer and an OOM.
+
+So the walk is now a `CroniterRange` iterator and `croniter_range` /
+`croniter_range_tz` are thin `.collect()` wrappers over it. `Item` is
+`Result<Occurrence>`: running out of matches inside the search bound ends the iteration
+silently, mirroring the Python's `except CroniterBadDateError: return`, while any other
+failure is surfaced rather than swallowed.
+
+`tests/regressions.rs::range_iterator_does_not_materialize_the_whole_window` pins it by
+taking three fires from a decade-long per-second window — about 300 million instants if
+collected — and asserting it returns promptly.
+
+## 18. Property tests, because agreeing with Python is not the same as being correct
+
+The corpus proves the port matches Python on 15,824 recorded calls, and the fuzzer
+compares the two on random ones. Neither says anything about a bug both implementations
+share, and neither covers inputs Python was never asked about.
+
+`tests/properties.rs` asserts what a cron iterator must satisfy on its own terms:
+
+- `get_next` advances, and lands on an instant `matches()` agrees is a fire — `matches`
+  runs the *backwards* search, so this is not the search agreeing with itself
+- `get_prev` recedes, and likewise lands on a fire
+- `prev(next(t)) <= t` — the round-trip cannot overshoot
+- `get_next` skips nothing: every minute in the gap is probed directly
+- `croniter_range` equals repeated `get_next` over the same window
+- expansion is deterministic, and `is_valid` agrees with actually parsing
+- a long walk is strictly increasing — a search that stalls would hang a scheduler and is
+  invisible to a one-step test
+
+Each runs against ordinary expressions and again against `L` / `W` / `#` and days 29-31,
+kept as separate cases so a failure says immediately which path broke. proptest rather
+than another random loop, for the shrinking: a counterexample arrives minimal.
+
+88,000 generated cases pass.

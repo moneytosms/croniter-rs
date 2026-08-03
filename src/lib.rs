@@ -539,7 +539,7 @@ pub fn croniter_range(
     exclude_ends: bool,
     second_at_beginning: bool,
 ) -> Result<Vec<NaiveDateTime>> {
-    let items = croniter_range_inner(
+    croniter_range_iter(
         start,
         stop,
         None,
@@ -547,17 +547,17 @@ pub fn croniter_range(
         day_or,
         exclude_ends,
         second_at_beginning,
-    )?;
-    Ok(items
-        .into_iter()
-        .map(|occ| match occ {
+    )?
+    .map(|occ| {
+        occ.map(|occ| match occ {
             Occurrence::Naive(d) => d,
             Occurrence::DateTime(d) => d.naive_local(),
             Occurrence::Timestamp(t) => DateTime::from_timestamp(t as i64, 0)
                 .unwrap_or_default()
                 .naive_utc(),
         })
-        .collect())
+    })
+    .collect()
 }
 
 /// `croniter_range` over timezone-aware bounds.
@@ -575,7 +575,7 @@ pub fn croniter_range_tz(
     second_at_beginning: bool,
 ) -> Result<Vec<DateTime<Tz>>> {
     let tz = start.timezone();
-    let items = croniter_range_inner(
+    croniter_range_iter(
         start.naive_local(),
         stop.naive_local(),
         Some(tz),
@@ -583,19 +583,20 @@ pub fn croniter_range_tz(
         day_or,
         exclude_ends,
         second_at_beginning,
-    )?;
-    Ok(items
-        .into_iter()
-        .map(|occ| match occ {
+    )?
+    .map(|occ| {
+        occ.map(|occ| match occ {
             Occurrence::DateTime(d) => d,
             other => DateTime::from_timestamp_micros((other.as_timestamp() * 1e6).round() as i64)
                 .unwrap_or_default()
                 .with_timezone(&tz),
         })
-        .collect())
+    })
+    .collect()
 }
 
-fn croniter_range_inner(
+/// Build the lazy walk. Public so a caller can stream a range instead of collecting it.
+pub fn croniter_range_iter(
     start: NaiveDateTime,
     stop: NaiveDateTime,
     tz: Option<Tz>,
@@ -603,7 +604,7 @@ fn croniter_range_inner(
     day_or: bool,
     exclude_ends: bool,
     second_at_beginning: bool,
-) -> Result<Vec<Occurrence>> {
+) -> Result<CroniterRange> {
     let (mut start, mut stop) = (start, stop);
     if !exclude_ends {
         let ms1 = Duration::microseconds(1);
@@ -634,7 +635,7 @@ fn croniter_range_inner(
             .ok_or_else(|| CroniterError::Other(format!("range {what} not representable in tz")))
     };
 
-    let mut cron = match tz {
+    let cron = match tz {
         Some(_) => Croniter::with_options(expr, None, Some(localize(start, "start")?), opts)?,
         None => Croniter::with_options(expr, Some(start), None, opts)?,
     };
@@ -647,24 +648,65 @@ fn croniter_range_inner(
         None => naive_to_timestamp(stop),
     };
 
-    let mut out = Vec::new();
-    loop {
-        let next = if forward {
-            cron.get_next(Some(RetType::DateTime))
+    Ok(CroniterRange {
+        cron,
+        forward,
+        stop_ts,
+        done: false,
+    })
+}
+
+/// A lazy walk between two instants: croniter's `croniter_range` generator.
+///
+/// Python yields, and that matters beyond style. A range spanning a year at one-second
+/// granularity is tens of millions of fires; collecting them costs gigabytes and the
+/// caller usually wants the first few. Differential fuzzing surfaced exactly that case —
+/// a generated range took 92 seconds and materialised the lot — so this streams, and the
+/// `Vec`-returning functions are thin wrappers over it for callers who do want them all.
+///
+/// `Item` is a `Result` because a search can fail partway. Running out of matches inside
+/// the bound ends the iteration silently, which is what the Python's `except
+/// CroniterBadDateError: return` does; anything else is surfaced rather than swallowed.
+pub struct CroniterRange {
+    cron: Croniter,
+    forward: bool,
+    stop_ts: f64,
+    done: bool,
+}
+
+impl Iterator for CroniterRange {
+    type Item = Result<Occurrence>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        let stepped = if self.forward {
+            self.cron.get_next(Some(RetType::DateTime))
         } else {
-            cron.get_prev(Some(RetType::DateTime))
+            self.cron.get_prev(Some(RetType::DateTime))
         };
-        let occ = match next {
+        let occ = match stepped {
             Ok(o) => o,
-            Err(CroniterError::BadDate(_)) => break,
-            Err(e) => return Err(e),
+            Err(CroniterError::BadDate(_)) => {
+                self.done = true;
+                return None;
+            }
+            Err(e) => {
+                self.done = true;
+                return Some(Err(e));
+            }
         };
         let ts = occ.as_timestamp();
-        let keep_going = if forward { ts < stop_ts } else { ts > stop_ts };
-        if !keep_going {
-            break;
+        let within = if self.forward {
+            ts < self.stop_ts
+        } else {
+            ts > self.stop_ts
+        };
+        if !within {
+            self.done = true;
+            return None;
         }
-        out.push(occ);
+        Some(Ok(occ))
     }
-    Ok(out)
 }

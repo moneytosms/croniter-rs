@@ -29,7 +29,7 @@ That is `cargo build --release` behind a pinned toolchain (`rust-toolchain.toml`
 ## Test
 
 ```sh
-make test           # native Rust: unit tests + golden-corpus replay
+make test           # native Rust: unit + property + regression tests, golden-corpus replay
 make test-original  # the original Python suite, live, against the port
 ```
 
@@ -60,16 +60,22 @@ subprocess over line-delimited JSON. This runs the byte-identical original test 
 against the port. Python calls the port as an external process; the port contains no
 Python. See `DECISIONS.md` §1 for the full reasoning.
 
-> **245–248 of 248 tests pass** (plus all 92 subtests), measured over 8 runs; one run
-> passed all 248. Every failure is one of the 4 tests in `test_croniter_random.py`, and
-> which of them fail varies run to run because the values are drawn randomly: the bridge is
-> stateless, so an `R` expression re-draws on each call instead of being fixed at
-> construction. That is a property of the transport, not of the port — the crate's own API
-> holds the expansion for the object's lifetime. See §16.
+> **248 / 248 tests pass**, plus all 92 subtests — ten consecutive runs, no flakes.
+>
+> This needed a handle protocol: the shim parses once in `__init__` and the engine holds
+> that parse for the object's lifetime. croniter draws an `R` expression's random values
+> during construction and reuses them, so re-expanding per call made consecutive
+> `get_next()`s wander instead of advance. See §16.
 
 **Differential fuzzing (continuous).** `fuzz/harness.py` generates random expressions,
 start instants and DST-boundary cases, runs each against both the pinned Python and the
-port, and compares. Latest run: **2,681 cases, 0 divergences** (`fuzz/log.txt`).
+port, and compares. Latest run: **4,184 cases, 0 divergences** (`fuzz/log.txt`).
+
+**Property tests (independent).** The three checks above all measure agreement *with
+Python*, which says nothing about a bug both share. `tests/properties.rs` asserts what a
+cron iterator must satisfy on its own terms — `next` advances and lands on a fire, skips
+nothing, round-trips through `prev`, and a long walk never stalls — against ordinary
+expressions and again against `L`/`W`/`#`. **88,000 generated cases, all passing** (§18).
 
 `tests/original/` is a verbatim copy of the upstream suite. `tests/original/HASHES.txt`
 carries per-file SHA-256, and `.port-mortem.toml` records the aggregate. Nothing in it was
@@ -85,6 +91,7 @@ src/lib.rs      public API and the DST tail   (croniter class)
 src/bin/        conformance JSON server, benchmark sample runner
 tests/original/ upstream suite, unmodified, hash-pinned
 tests/port/     golden corpus
+tests/          corpus replay, property tests, regression tests
 tools/          corpus extractor and Python bridge
 fuzz/           differential fuzz harness and log
 bench/          benchmark methodology, comparison script, results
@@ -111,9 +118,18 @@ single-machine with no CPU pinning.
 ## Divergences
 
 Every non-trivial difference from the Python is written up in
-[`DECISIONS.md`](./DECISIONS.md) — 16 entries, including the one known behavioural
+[`DECISIONS.md`](./DECISIONS.md) — 18 entries, including the one known behavioural
 divergence (day-of-month/day-of-week union across a DST transition, §5), the four calls
-Rust's type system makes unconstructible (§15), and the bridge's statelessness (§16).
+Rust's type system makes unconstructible (§15), the bridge's handle protocol (§16), and
+the range walk that streams rather than collecting (§17).
+
+## Safety and error handling
+
+No `unsafe`, anywhere. Library code contains no `unwrap`, `expect`, `panic!` or
+`unreachable!` outside test modules: every fallible path returns `Result<_, CroniterError>`,
+and the three places that once relied on a preceding guard to make an `unwrap` safe now
+carry the invariant in the type instead. `cargo clippy --all-targets -- -D warnings` is
+clean.
 
 ## Licence
 
